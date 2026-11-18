@@ -7,10 +7,92 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 from app.db.session import get_db
 from app.core.security import get_current_active_user
-from app.models import User, Project, Scene, Character, Location, Episode, Prompt, PromptType
+from app.models import User, Project, Scene, SceneCharacter, Dialogue, Character, Location, Episode, Prompt, PromptType
 from app.schemas import PromptCreate, PromptUpdate, PromptResponse, PromptGenerationRequest, PromptGenerationResponse, PaginationParams, PaginatedResponse
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
+
+
+class _SafeFormatDict(dict):
+    """dict for str.format that leaves unknown placeholders intact instead of KeyError."""
+
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def _safe_format(template: str, **values) -> str:
+    return template.format_map(_SafeFormatDict(values))
+
+
+# AI Prompt Generation endpoints
+@router.post("/generate", response_model=PromptGenerationResponse)
+async def generate_prompt(
+    request: PromptGenerationRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Generate AI prompts for various types.
+    This is a placeholder that returns structured prompts based on type and context.
+    In production, this would call an LLM API.
+    """
+    prompt_templates = {
+        PromptType.CHARACTER_IMAGE: {
+            "prompt": "A detailed character portrait of {name}, {physical_appearance}. {personality}. {costume}. Cinematic lighting, high quality, 8k resolution, consistent character design.",
+            "negative": "blurry, low quality, distorted, deformed, ugly, bad anatomy, extra limbs, watermark, text, signature",
+            "parameters": {"width": 1024, "height": 1024, "steps": 30, "cfg_scale": 7.0}
+        },
+        PromptType.LOCATION_IMAGE: {
+            "prompt": "A cinematic establishing shot of {name}, {environment}. {lighting} lighting, {atmosphere} atmosphere. High quality, detailed environment, 8k resolution.",
+            "negative": "blurry, low quality, distorted, watermark, text, people, characters",
+            "parameters": {"width": 1920, "height": 1080, "steps": 30, "cfg_scale": 7.0}
+        },
+        PromptType.SCENE_IMAGE: {
+            "prompt": "A cinematic scene: {description}. Characters: {characters}. Camera: {camera_directions}. {lighting} lighting. High quality, cinematic composition, 8k.",
+            "negative": "blurry, low quality, distorted, bad composition, watermark, text",
+            "parameters": {"width": 1920, "height": 1080, "steps": 30, "cfg_scale": 7.0}
+        },
+        PromptType.VIDEO_GENERATION: {
+            "prompt": "Cinematic video: {description}. Camera movement: {camera_movement}. Characters performing: {actions}. Duration: 5-10 seconds. High quality, smooth motion.",
+            "negative": "blurry, low quality, distorted, flickering, bad motion, watermark, text",
+            "parameters": {"duration": 8, "fps": 24, "resolution": "1920x1080"}
+        },
+        PromptType.CAMERA_MOVEMENT: {
+            "prompt": "Camera movement: {movement_type}. Speed: {speed}. Angle: {angle}. Smooth professional cinematography.",
+            "negative": "shaky, jittery, abrupt, amateur",
+            "parameters": {}
+        },
+        PromptType.CHARACTER_ACTION: {
+            "prompt": "Character {name} performing: {action}. Emotional state: {emotion}. {direction}. Cinematic, expressive acting.",
+            "negative": "stiff, unnatural, bad acting, distorted",
+            "parameters": {}
+        },
+        PromptType.DIALOGUE_AUDIO: {
+            "prompt": "Voice acting for {name}: \"{text}\". Tone: {direction}. Emotional state: {emotion}. High quality voice recording.",
+            "negative": "robotic, monotone, background noise, low quality",
+            "parameters": {"format": "wav", "sample_rate": 44100}
+        }
+    }
+
+    template = prompt_templates.get(request.prompt_type, {
+        "prompt": "Generate content for {prompt_type} with context: {context}",
+        "negative": "",
+        "parameters": {}
+    })
+
+    # Fill template with context
+    context = request.context
+    style = request.style_preferences or {}
+
+    prompt_text = _safe_format(template["prompt"], **context, **style)
+    negative_prompt = _safe_format(template["negative"], **context, **style) if template["negative"] else None
+    parameters = {**template["parameters"], **(style.get("parameters", {}))}
+
+    return PromptGenerationResponse(
+        prompt_text=prompt_text,
+        negative_prompt=negative_prompt,
+        parameters=parameters
+    )
 
 
 @router.post("/{project_id}", response_model=PromptResponse, status_code=status.HTTP_201_CREATED)
@@ -206,77 +288,6 @@ async def delete_prompt(
     await db.commit()
 
 
-# AI Prompt Generation endpoints
-@router.post("/generate", response_model=PromptGenerationResponse)
-async def generate_prompt(
-    request: PromptGenerationRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    Generate AI prompts for various types.
-    This is a placeholder that returns structured prompts based on type and context.
-    In production, this would call an LLM API.
-    """
-    prompt_templates = {
-        PromptType.CHARACTER_IMAGE: {
-            "prompt": "A detailed character portrait of {name}, {physical_appearance}. {personality}. {costume}. Cinematic lighting, high quality, 8k resolution, consistent character design.",
-            "negative": "blurry, low quality, distorted, deformed, ugly, bad anatomy, extra limbs, watermark, text, signature",
-            "parameters": {"width": 1024, "height": 1024, "steps": 30, "cfg_scale": 7.0}
-        },
-        PromptType.LOCATION_IMAGE: {
-            "prompt": "A cinematic establishing shot of {name}, {environment}. {lighting} lighting, {atmosphere} atmosphere. High quality, detailed environment, 8k resolution.",
-            "negative": "blurry, low quality, distorted, watermark, text, people, characters",
-            "parameters": {"width": 1920, "height": 1080, "steps": 30, "cfg_scale": 7.0}
-        },
-        PromptType.SCENE_IMAGE: {
-            "prompt": "A cinematic scene: {description}. Characters: {characters}. Camera: {camera_directions}. {lighting} lighting. High quality, cinematic composition, 8k.",
-            "negative": "blurry, low quality, distorted, bad composition, watermark, text",
-            "parameters": {"width": 1920, "height": 1080, "steps": 30, "cfg_scale": 7.0}
-        },
-        PromptType.VIDEO_GENERATION: {
-            "prompt": "Cinematic video: {description}. Camera movement: {camera_movement}. Characters performing: {actions}. Duration: 5-10 seconds. High quality, smooth motion.",
-            "negative": "blurry, low quality, distorted, flickering, bad motion, watermark, text",
-            "parameters": {"duration": 8, "fps": 24, "resolution": "1920x1080"}
-        },
-        PromptType.CAMERA_MOVEMENT: {
-            "prompt": "Camera movement: {movement_type}. Speed: {speed}. Angle: {angle}. Smooth professional cinematography.",
-            "negative": "shaky, jittery, abrupt, amateur",
-            "parameters": {}
-        },
-        PromptType.CHARACTER_ACTION: {
-            "prompt": "Character {name} performing: {action}. Emotional state: {emotion}. {direction}. Cinematic, expressive acting.",
-            "negative": "stiff, unnatural, bad acting, distorted",
-            "parameters": {}
-        },
-        PromptType.DIALOGUE_AUDIO: {
-            "prompt": "Voice acting for {name}: \"{text}\". Tone: {direction}. Emotional state: {emotion}. High quality voice recording.",
-            "negative": "robotic, monotone, background noise, low quality",
-            "parameters": {"format": "wav", "sample_rate": 44100}
-        }
-    }
-
-    template = prompt_templates.get(request.prompt_type, {
-        "prompt": "Generate content for {prompt_type} with context: {context}",
-        "negative": "",
-        "parameters": {}
-    })
-
-    # Fill template with context
-    context = request.context
-    style = request.style_preferences or {}
-
-    prompt_text = template["prompt"].format(**context, **style)
-    negative_prompt = template["negative"].format(**context, **style) if template["negative"] else None
-    parameters = {**template["parameters"], **(style.get("parameters", {}))}
-
-    return PromptGenerationResponse(
-        prompt_text=prompt_text,
-        negative_prompt=negative_prompt,
-        parameters=parameters
-    )
-
-
 # Batch prompt generation for a scene
 @router.post("/{project_id}/episodes/{episode_id}/scenes/{scene_id}/generate-all", response_model=List[PromptResponse])
 async def generate_all_scene_prompts(
@@ -423,7 +434,3 @@ async def generate_all_scene_prompts(
         await db.refresh(p)
 
     return prompts_created
-
-
-# Import missing models
-from app.models import Dialogue

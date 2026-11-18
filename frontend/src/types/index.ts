@@ -192,7 +192,7 @@ export interface Asset {
   file_name: string;
   file_size: number | null;
   mime_type: string | null;
-  metadata: Record<string, unknown> | null;
+  asset_metadata: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -237,6 +237,47 @@ export interface PromptGenerationResponse {
   prompt_text: string;
   negative_prompt: string | null;
   parameters: Record<string, unknown> | null;
+}
+
+export interface ProviderConfig {
+  id?: string;
+  name: string;
+  provider?: string;
+  model: string;
+  api_key_env: string;
+  base_url?: string;
+  enabled: boolean;
+  order: number;
+  priority?: number;
+}
+
+export interface AppSettingsResponse {
+  ai_providers: ProviderConfig[];
+  google_oauth_client_id_configured: boolean;
+  google_oauth_client_secret_configured: boolean;
+}
+
+export interface AppSettingsUpdate {
+  ai_providers?: ProviderConfig[];
+  google_oauth_client_id?: string;
+  google_oauth_client_secret?: string;
+}
+
+export interface GoogleAuthURLResponse {
+  auth_url: string;
+  state: string;
+}
+
+export interface GoogleOAuthCallbackRequest {
+  code: string;
+  state: string;
+  account_id: string;
+}
+
+export interface GoogleOAuthCallbackResponse {
+  success: boolean;
+  message: string;
+  account_id?: string;
 }
 
 export interface AuthTokens {

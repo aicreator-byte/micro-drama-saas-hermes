@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useProjectStore } from '@/lib/project-store';
+import { api } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -93,6 +94,21 @@ export default function GoogleAccountsPage() {
       alert(error.response?.data?.detail || 'Failed to delete Google account');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleConnectOAuth = async (accountId: string) => {
+    setSyncingId(accountId);
+    try {
+      const { auth_url } = await api.getGoogleAuthUrl(accountId);
+      // The callback page needs to know which account the code belongs to.
+      sessionStorage.setItem('google_oauth_account_id', accountId);
+      window.location.href = auth_url;
+    } catch (error: any) {
+      console.error('Failed to start Google OAuth:', error);
+      alert(error.response?.data?.detail || 'Failed to start Google OAuth. Check that OAuth credentials are configured in Settings.');
+    } finally {
+      setSyncingId(null);
     }
   };
 
@@ -224,6 +240,14 @@ export default function GoogleAccountsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleConnectOAuth(account.id)}
+                      disabled={syncingId === account.id}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50"
+                      aria-label="Connect via Google OAuth"
+                    >
+                      Connect via Google
+                    </button>
                     <button
                       onClick={() => handleSync(account.id)}
                       disabled={syncingId === account.id}

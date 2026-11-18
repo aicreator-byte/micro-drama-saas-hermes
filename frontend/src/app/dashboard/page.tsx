@@ -21,6 +21,7 @@ import {
   Plus,
   ArrowRight,
   LayoutDashboard,
+  Settings,
 } from 'lucide-react';
 
 const quickActions = [
@@ -32,6 +33,7 @@ const quickActions = [
   { name: 'Scenes', href: '/dashboard/scenes', icon: Clapperboard, description: 'Break down scenes and shots' },
   { name: 'Prompts', href: '/dashboard/prompts', icon: Bot, description: 'Generate AI prompts' },
   { name: 'Flow Bridge', href: '/dashboard/flow', icon: PlugZap, description: 'Export for Google Flow' },
+  { name: 'Settings', href: '/dashboard/settings', icon: Settings, description: 'Configure AI providers & OAuth' },
 ];
 
 const navItems = [

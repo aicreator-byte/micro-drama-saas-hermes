@@ -4,7 +4,7 @@ from sqlalchemy import select
 from datetime import datetime
 from app.db.session import get_db
 from app.core.security import verify_password, get_password_hash, create_user_token, get_current_active_user
-from app.models import User
+from app.models import User, UserRole
 from app.schemas import UserCreate, UserLogin, UserResponse, Token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -19,10 +19,17 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 
     # Create user
     hashed_password = get_password_hash(user_data.password)
+    # Bootstrap: the very first registered user becomes ADMIN, so the
+    # admin-gated Settings endpoints stay reachable without manual DB edits.
+    existing_admin = await db.execute(
+        select(User).where(User.role == UserRole.ADMIN)
+    )
+    role = UserRole.ADMIN if existing_admin.scalar_one_or_none() is None else UserRole.USER
     user = User(
         email=user_data.email,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
+        role=role,
     )
     db.add(user)
     await db.commit()

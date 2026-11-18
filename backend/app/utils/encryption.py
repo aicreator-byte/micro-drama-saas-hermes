@@ -43,3 +43,18 @@ def decrypt_data(encrypted_str: str) -> dict:
     encrypted = base64.urlsafe_b64decode(encrypted_str.encode())
     decrypted = cipher.decrypt(encrypted)
     return json.loads(decrypted.decode())
+
+
+def encrypt_string(value: str) -> str:
+    """Encrypt a simple string value."""
+    cipher = get_cipher()
+    encrypted = cipher.encrypt(value.encode())
+    return base64.urlsafe_b64encode(encrypted).decode()
+
+
+def decrypt_string(encrypted_str: str) -> str:
+    """Decrypt a simple string value."""
+    cipher = get_cipher()
+    encrypted = base64.urlsafe_b64decode(encrypted_str.encode())
+    decrypted = cipher.decrypt(encrypted)
+    return decrypted.decode()

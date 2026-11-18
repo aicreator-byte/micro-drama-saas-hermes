@@ -297,6 +297,7 @@ class GoogleAccount(Base):
     display_name: Mapped[str] = mapped_column(String(255), nullable=True)
     status: Mapped[GoogleAccountStatus] = mapped_column(Enum(GoogleAccountStatus), default=GoogleAccountStatus.DISCONNECTED, nullable=False)
     session_data: Mapped[dict] = mapped_column(JSON, nullable=True)
+    password_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
     last_sync: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -325,6 +326,13 @@ class FlowTask(Base):
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     output_files: Mapped[List[str]] = mapped_column(JSON, nullable=True)
     google_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("google_accounts.id", ondelete="SET NULL"), nullable=True)
+    # Google-account fallback (Flow Bridge): account actually in use right now.
+    # google_account_id keeps the account originally requested; active_account_id
+    # moves when fallback switches to the next account. fallback_history is an
+    # append-only audit trail: [{account_id, email, result, reason, at}].
+    active_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("google_accounts.id", ondelete="SET NULL"), nullable=True)
+    fallback_history: Mapped[List[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
@@ -332,7 +340,8 @@ class FlowTask(Base):
     project = relationship("Project", lazy="selectin")
     episode = relationship("Episode", lazy="selectin")
     scene = relationship("Scene", lazy="selectin")
-    google_account = relationship("GoogleAccount", lazy="selectin")
+    google_account = relationship("GoogleAccount", lazy="selectin", foreign_keys=[google_account_id])
+    active_account = relationship("GoogleAccount", lazy="selectin", foreign_keys=[active_account_id])
 
 
 class Asset(Base):
@@ -372,6 +381,18 @@ class EpisodeRevision(Base):
     __table_args__ = (
         UniqueConstraint("episode_id", "revision_number", name="uq_episode_revision"),
     )
+
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Single-row settings table - only one record expected
+    ai_providers: Mapped[list[dict]] = mapped_column(JSON, nullable=True)
+    google_oauth_client_id_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
+    google_oauth_client_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class AuditLog(Base):

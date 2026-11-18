@@ -1,5 +1,6 @@
 import pytest
 from httpx import AsyncClient
+from unittest.mock import AsyncMock, patch
 
 
 class TestAuth:
@@ -441,16 +442,58 @@ class TestStoryEngine:
     @pytest.mark.asyncio
     async def test_generate_series(self, client: AsyncClient, auth_headers, test_project):
         """Test generating a series outline."""
-        response = await client.post(
-            f"/api/v1/story-engine/{test_project.id}/generate-series",
-            json={
-                "premise": "A test drama",
-                "genre": "Drama",
-                "num_episodes": 5,
-            },
-            headers=auth_headers,
-        )
+        # Mock the AI service to avoid external API calls
+        mock_result = {
+            "episodes": [
+                {
+                    "episode_number": 1,
+                    "title": "Pilot",
+                    "outline": "Introduction to the main characters and premise",
+                    "act": "setup",
+                    "key_beats": ["Beat 1", "Beat 2", "Beat 3", "Beat 4"],
+                    "cliffhanger": "A mysterious stranger arrives"
+                },
+                {
+                    "episode_number": 2,
+                    "title": "Secrets Revealed",
+                    "outline": "The stranger's identity is revealed",
+                    "act": "setup",
+                    "key_beats": ["Beat 1", "Beat 2", "Beat 3", "Beat 4"],
+                    "cliffhanger": "A betrayal changes everything"
+                },
+            ],
+            "series_bible": {
+                "main_plot": "A family drama about love and betrayal spanning generations",
+                "subplots": [
+                    {"name": "Romance", "description": "Forbidden love between rivals", "theme": "Love vs duty"},
+                    {"name": "Family", "description": "Sibling rivalry for inheritance", "theme": "Greed vs loyalty"}
+                ],
+                "episode_structure": {
+                    "total_episodes": 5,
+                    "structure": "three_act",
+                    "acts": {
+                        "act1": {"episodes": "1-2", "focus": "setup"},
+                        "act2": {"episodes": "3-4", "focus": "confrontation"},
+                        "act3": {"episodes": "5", "focus": "resolution"}
+                    }
+                }
+            }
+        }
+        
+        with patch("app.api.story_engine.generate_series_outline", new_callable=AsyncMock) as mock_generate:
+            mock_generate.return_value = mock_result
+            response = await client.post(
+                f"/api/v1/story-engine/{test_project.id}/generate-series",
+                json={
+                    "premise": "A test drama",
+                    "genre": "Drama",
+                    "num_episodes": 5,
+                },
+                headers=auth_headers,
+            )
         assert response.status_code == 201
         data = response.json()
         assert "episodes" in data
         assert "series_bible" in data
+        assert len(data["episodes"]) == 2
+        assert data["episodes"][0]["title"] == "Pilot"

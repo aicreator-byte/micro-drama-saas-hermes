@@ -41,6 +41,7 @@ const navigation = [
   { name: 'Flow Bridge', href: '/dashboard/flow', icon: PlugZap },
   { name: 'Assets', href: '/dashboard/assets', icon: FileVideo },
   { name: 'Google Accounts', href: '/dashboard/google-accounts', icon: FileText },
+  { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 
 export function DashboardLayout({ children }: { children: ReactNode }) {

@@ -55,8 +55,22 @@ async def upload_asset(
     if len(content) > settings.MAX_UPLOAD_SIZE:
         raise HTTPException(status_code=400, detail=f"File too large. Max size: {settings.MAX_UPLOAD_SIZE} bytes")
 
+    # Validate file extension against asset type (allowlist)
+    allowed_extensions = {
+        AssetType.IMAGE: {".png", ".jpg", ".jpeg", ".webp", ".gif"},
+        AssetType.VIDEO: {".mp4", ".mov", ".avi", ".webm", ".mkv"},
+        AssetType.AUDIO: {".wav", ".mp3", ".ogg", ".m4a"},
+        AssetType.SUBTITLE: {".srt", ".vtt"},
+        AssetType.DOCUMENT: {".pdf", ".txt", ".md", ".json", ".docx"},
+    }
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
+    if file_ext not in allowed_extensions.get(asset_type, set()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File extension '{file_ext}' not allowed for asset type '{asset_type.value}'",
+        )
+
     # Save file
-    file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid_lib.uuid4()}{file_ext}"
     project_upload_dir = settings.UPLOAD_DIR / str(project_id)
     project_upload_dir.mkdir(parents=True, exist_ok=True)
@@ -65,9 +79,16 @@ async def upload_asset(
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # Parse metadata
+    # Parse metadata (invalid JSON -> 400, not 500)
     import json
-    metadata_dict = json.loads(metadata) if metadata else None
+    metadata_dict = None
+    if metadata:
+        try:
+            metadata_dict = json.loads(metadata)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="metadata must be valid JSON")
+        if not isinstance(metadata_dict, dict):
+            raise HTTPException(status_code=400, detail="metadata must be a JSON object")
 
     # Create asset record
     asset = Asset(
@@ -79,7 +100,7 @@ async def upload_asset(
         file_name=file.filename,
         file_size=len(content),
         mime_type=file.content_type,
-        metadata=metadata_dict
+        asset_metadata=metadata_dict
     )
     db.add(asset)
     await db.commit()
@@ -296,7 +317,7 @@ async def assemble_episode_video(
         file_name=output_filename,
         file_size=file_size,
         mime_type="video/mp4",
-        metadata={"assembled_from": [str(s) for s in scene_order]}
+        asset_metadata={"assembled_from": [str(s) for s in scene_order]}
     )
     db.add(final_asset)
     await db.commit()
@@ -372,7 +393,7 @@ async def add_subtitles_to_video(
         file_name=output_filename,
         file_size=file_size,
         mime_type="video/mp4",
-        metadata={"source_video": str(video_asset_id), "subtitles": str(subtitle_asset_id)}
+        asset_metadata={"source_video": str(video_asset_id), "subtitles": str(subtitle_asset_id)}
     )
     db.add(final_asset)
     await db.commit()

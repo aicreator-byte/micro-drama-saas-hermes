@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useProjectStore } from '@/lib/project-store';
 import { api } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
@@ -12,7 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
 import { formatDate, getStatusColor } from '@/lib/utils';
-import { Plus, Edit, Save, Trash2, Film, Loader2, Sparkles, ArrowRight } from 'lucide-react';
+import { Plus, Edit, Save, Trash2, Film, Loader2, Sparkles } from 'lucide-react';
 
 export default function EpisodesPage() {
   const { currentProject, episodes, fetchEpisodes, createEpisode, updateEpisode, deleteEpisode } = useProjectStore();
@@ -29,6 +28,13 @@ export default function EpisodesPage() {
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [generateForm, setGenerateForm] = useState({
+    premise: '',
+    genre: 'drama',
+    num_episodes: '20',
+    tone: '',
+  });
 
   useEffect(() => {
     if (currentProject) {
@@ -115,6 +121,26 @@ export default function EpisodesPage() {
     });
   };
 
+  const handleGenerateSeries = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentProject || !generateForm.premise.trim()) return;
+    setGenerating(true);
+    try {
+      await useProjectStore.getState().generateSeries(currentProject.id, {
+        premise: generateForm.premise.trim(),
+        genre: generateForm.genre || undefined,
+        num_episodes: parseInt(generateForm.num_episodes) || 20,
+        tone: generateForm.tone || undefined,
+      });
+      setShowGenerateModal(false);
+    } catch (error) {
+      console.error('Failed to generate series:', error);
+      alert('Failed to generate series');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const handleGenerateScenes = async (episode: typeof episodes[0]) => {
     if (!currentProject) return;
     setGeneratingEpisode(episode);
@@ -164,7 +190,7 @@ export default function EpisodesPage() {
             <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
             Add Episode
           </Button>
-          <Button onClick={() => useProjectStore.getState().generateSeries(currentProject.id, { premise: '', num_episodes: 20 })}>
+          <Button onClick={() => setShowGenerateModal(true)}>
             <Sparkles className="w-4 h-4 mr-2" aria-hidden="true" />
             Generate Series
           </Button>
@@ -182,7 +208,7 @@ export default function EpisodesPage() {
                 <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
                 Add Episode
               </Button>
-              <Button variant="outline" onClick={() => useProjectStore.getState().generateSeries(currentProject.id, { premise: '', num_episodes: 20 })}>
+              <Button variant="outline" onClick={() => setShowGenerateModal(true)}>
                 <Sparkles className="w-4 h-4 mr-2" aria-hidden="true" />
                 Generate Series
               </Button>
@@ -215,11 +241,6 @@ export default function EpisodesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 ml-4">
-                    <Link href={`/dashboard/episodes/${episode.id}`}>
-                      <button className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" aria-label="View episode">
-                        <ArrowRight className="w-4 h-4" aria-hidden="true" />
-                      </button>
-                    </Link>
                     <button
                       onClick={() => startEdit(episode)}
                       className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
@@ -260,6 +281,66 @@ export default function EpisodesPage() {
           ))}
         </div>
       )}
+
+      {/* Generate Series Modal */}
+      <Modal
+        isOpen={showGenerateModal}
+        onClose={() => setShowGenerateModal(false)}
+        title="Generate Series"
+      >
+        <form onSubmit={handleGenerateSeries} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Premise *</label>
+            <Textarea
+              value={generateForm.premise}
+              onChange={(e) => setGenerateForm({ ...generateForm, premise: e.target.value })}
+              placeholder="e.g., A poor seamstress inherits a fashion empire and must outwit the family that humiliated her."
+              rows={4}
+              required
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Genre</label>
+              <Input
+                value={generateForm.genre}
+                onChange={(e) => setGenerateForm({ ...generateForm, genre: e.target.value })}
+                placeholder="drama"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Episodes</label>
+              <Input
+                type="number"
+                min="1"
+                max="50"
+                value={generateForm.num_episodes}
+                onChange={(e) => setGenerateForm({ ...generateForm, num_episodes: e.target.value })}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tone</label>
+            <Input
+              value={generateForm.tone}
+              onChange={(e) => setGenerateForm({ ...generateForm, tone: e.target.value })}
+              placeholder="e.g., dramatic, romantic, tense"
+            />
+          </div>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+            Regenerating replaces existing episodes. The current episodes are snapshotted as revisions first.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" onClick={() => setShowGenerateModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={generating || !generateForm.premise.trim()}>
+              <Sparkles className="w-4 h-4 mr-2" aria-hidden="true" />
+              {generating ? 'Generating...' : 'Generate Series'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Create/Edit Modal */}
       <Modal

@@ -380,6 +380,7 @@ class FlowTaskUpdate(BaseSchema):
     reference_assets: Optional[List[str]] = None
     status: Optional[str] = None
     output_files: Optional[List[str]] = None
+    google_account_id: Optional[UUID] = None
 
 
 class FlowTaskResponse(FlowTaskBase):
@@ -388,11 +389,31 @@ class FlowTaskResponse(FlowTaskBase):
     episode_id: Optional[UUID] = None
     scene_id: Optional[UUID] = None
     google_account_id: Optional[UUID] = None
+    active_account_id: Optional[UUID] = None
+    fallback_history: Optional[List[Dict[str, Any]]] = None
+    error_message: Optional[str] = None
     status: str
     output_files: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+
+
+class FlowTaskRetryRequest(BaseSchema):
+    """Manual retry: optionally force the run to start from a specific account."""
+    google_account_id: Optional[UUID] = None
+
+
+class FlowTaskBrowserExecuteRequest(BaseSchema):
+    """Browser execution: optionally force a fresh Google login instead of
+    reusing the saved browser session for the account."""
+    force_relogin: bool = False
+
+
+class BrowserLoginRequest(BaseSchema):
+    """Single-account browser login: force a fresh login instead of reusing
+    the saved browser session."""
+    force_relogin: bool = False
 
 
 # Asset schemas
@@ -405,7 +426,7 @@ class AssetBase(BaseSchema):
 class AssetCreate(AssetBase):
     file_path: str
     file_size: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
+    asset_metadata: Optional[Dict[str, Any]] = None
 
 
 class AssetResponse(AssetBase):
@@ -415,7 +436,7 @@ class AssetResponse(AssetBase):
     scene_id: Optional[UUID] = None
     file_path: str
     file_size: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
+    asset_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
 
 
@@ -452,9 +473,60 @@ class AuditLogResponse(BaseSchema):
     created_at: datetime
 
 
+# App Settings schemas
+class ProviderConfig(BaseSchema):
+    id: Optional[str] = None
+    name: str
+    provider: Optional[str] = None
+    model: str
+    api_key_env: str
+    base_url: Optional[str] = None
+    enabled: bool = True
+    order: int = 0
+    priority: Optional[int] = None
+
+
+class AppSettingsBase(BaseSchema):
+    ai_providers: Optional[List[ProviderConfig]] = None
+
+
+class AppSettingsUpdate(BaseSchema):
+    ai_providers: Optional[List[ProviderConfig]] = None
+    google_oauth_client_id: Optional[str] = None
+    google_oauth_client_secret: Optional[str] = None
+
+
+class AppSettingsResponse(BaseSchema):
+    ai_providers: Optional[List[ProviderConfig]] = None
+    google_oauth_client_id_configured: bool = False
+    google_oauth_client_secret_configured: bool = False
+
+
+# Google OAuth schemas
+class GoogleAuthURLResponse(BaseSchema):
+    auth_url: str
+    state: str
+
+
+class GoogleOAuthCallbackRequest(BaseSchema):
+    code: str
+    state: str
+    account_id: UUID
+
+
+class GoogleOAuthCallbackResponse(BaseSchema):
+    success: bool
+    message: str
+    account_id: Optional[UUID] = None
+
+
+class GoogleAccountPasswordUpdate(BaseSchema):
+    password: str
+
+
 # Story Generation schemas
 class StoryGenerationRequest(BaseSchema):
-    premise: str
+    premise: str = Field(..., min_length=1)
     genre: Optional[str] = None
     themes: Optional[List[str]] = None
     num_episodes: int = Field(default=20, ge=1, le=50)

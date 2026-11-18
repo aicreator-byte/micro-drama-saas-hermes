@@ -27,6 +27,11 @@ async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         try:
             yield session
+        except Exception:
+            # Roll back so one failed request cannot poison the session /
+            # connection for the next request on the same keep-alive.
+            await session.rollback()
+            raise
         finally:
             await session.close()
 

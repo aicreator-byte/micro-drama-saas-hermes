@@ -68,5 +68,16 @@ async def get_current_active_user(
     return current_user
 
 
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_active_user)
+) -> User:
+    """Require ADMIN role. AppSettings are global (single row), so only
+    admins may change them."""
+    from app.models import UserRole
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
 def create_user_token(user: User) -> str:
     return create_access_token(data={"sub": str(user.id)})

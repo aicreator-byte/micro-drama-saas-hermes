@@ -27,14 +27,8 @@ async def create_character(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Check character count (max 6 per project as per requirements)
-    count_result = await db.execute(
-        select(func.count(Character.id)).where(Character.project_id == project_id)
-    )
-    count = count_result.scalar() or 0
-    if count >= 6:
-        raise HTTPException(status_code=400, detail="Maximum 6 characters per project")
-
+    # No per-project character limit (keputusan Di 17 Nov 2026:
+    # maks 6 karakter TIDAK ditegakkan — karakter ke-7+ diterima).
     character = Character(project_id=project_id, **character_data.model_dump())
     db.add(character)
     await db.commit()

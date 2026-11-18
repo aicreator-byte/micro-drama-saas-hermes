@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # App
     APP_NAME: str = "Micro Drama SaaS"
     APP_VERSION: str = "0.1.0"
-    DEBUG: bool = True
+    DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
     # Server
@@ -38,6 +38,25 @@ class Settings(BaseSettings):
 
     # Google Account limits
     MAX_GOOGLE_ACCOUNTS_PER_USER: int = 20
+
+    # Google OAuth redirect URI (must match the frontend callback page
+    # and the URI registered in Google Cloud Console)
+    GOOGLE_OAUTH_REDIRECT_URI: str = os.getenv(
+        "GOOGLE_OAUTH_REDIRECT_URI",
+        "http://localhost:3000/dashboard/google-accounts/callback",
+    )
+
+    # Browser login (Flow Bridge, Di order 2026-11-17 22:22 WIB):
+    # login Google biasa lewat browser per akun — TANPA Cloud Console.
+    # Satu profil browser persisten per akun di bawah dir ini.
+    BROWSER_PROFILE_DIR: Path = Path(os.getenv(
+        "BROWSER_PROFILE_DIR",
+        "/home/hatch/workspace/micro-drama-saas/hermes/browser-profiles",
+    ))
+    FLOW_URL: str = os.getenv(
+        "FLOW_URL", "https://labs.google/fx/tools/flow"
+    )
+    BROWSER_HEADLESS: bool = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
 
     # AI Provider (for LLM integration)
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "nvidia")

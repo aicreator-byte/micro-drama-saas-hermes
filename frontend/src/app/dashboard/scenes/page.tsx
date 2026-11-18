@@ -1,14 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useProjectStore } from '@/lib/project-store';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { NativeSelect } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { formatDate, getStatusColor } from '@/lib/utils';
-import { Clapperboard, Plus, Edit, Trash2, ArrowRight, Sparkles, Loader2, Eye } from 'lucide-react';
+import { Clapperboard, Plus, Edit, Trash2, Sparkles, Loader2 } from 'lucide-react';
 
 export default function ScenesPage() {
   const { currentProject, episodes, scenes, fetchScenes, fetchEpisodes } = useProjectStore();
@@ -106,11 +105,6 @@ export default function ScenesPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 ml-4">
-                      <Link href={`/dashboard/scenes/${selectedEpisodeId}/${scene.id}`}>
-                        <button className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" aria-label="View scene">
-                          <Eye className="w-4 h-4" aria-hidden="true" />
-                        </button>
-                      </Link>
                       <button className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors" aria-label="Edit scene">
                         <Edit className="w-4 h-4" aria-hidden="true" />
                       </button>

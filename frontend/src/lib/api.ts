@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { AuthTokens, User, Project, SeriesBible, Character, Location, Episode, Scene, SceneCharacter, Dialogue, Prompt, PromptType, GoogleAccount, FlowTask, AssetType, Asset, PaginatedResponse, StoryGenerationRequest, StoryGenerationResponse, SceneBreakdownRequest, SceneBreakdownResponse, PromptGenerationRequest, PromptGenerationResponse } from '@/types';
+import type { AuthTokens, User, Project, SeriesBible, Character, Location, Episode, Scene, SceneCharacter, Dialogue, Prompt, PromptType, GoogleAccount, FlowTask, AssetType, Asset, PaginatedResponse, StoryGenerationRequest, StoryGenerationResponse, SceneBreakdownRequest, SceneBreakdownResponse, PromptGenerationRequest, PromptGenerationResponse, ProviderConfig, AppSettingsResponse, AppSettingsUpdate, GoogleAuthURLResponse, GoogleOAuthCallbackResponse } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -508,6 +508,50 @@ class ApiClient {
 
   async createEpisodesFromOutline(projectId: string, episodesData: Array<Record<string, unknown>>): Promise<{ created_episodes: number[]; count: number }> {
     const response = await this.client.post(`/story-engine/${projectId}/create-episodes`, episodesData);
+    return response.data;
+  }
+
+  // Settings endpoints
+  async getSettings(): Promise<AppSettingsResponse> {
+    const response = await this.client.get<AppSettingsResponse>('/settings');
+    return response.data;
+  }
+
+  async updateSettings(data: AppSettingsUpdate): Promise<AppSettingsResponse> {
+    const response = await this.client.patch<AppSettingsResponse>('/settings', data);
+    return response.data;
+  }
+
+  // Google OAuth endpoints
+  async getGoogleAuthUrl(accountId: string): Promise<GoogleAuthURLResponse> {
+    const response = await this.client.get<GoogleAuthURLResponse>(`/google-accounts/${accountId}/auth-url`);
+    return response.data;
+  }
+
+  async googleOAuthCallback(code: string, state: string, accountId: string): Promise<GoogleOAuthCallbackResponse> {
+    const response = await this.client.post<GoogleOAuthCallbackResponse>(`/google-accounts/callback`, null, {
+      params: { code, state, account_id: accountId }
+    });
+    return response.data;
+  }
+
+  async refreshGoogleToken(accountId: string): Promise<GoogleOAuthCallbackResponse> {
+    const response = await this.client.post<GoogleOAuthCallbackResponse>(`/google-accounts/${accountId}/refresh`);
+    return response.data;
+  }
+
+  async setGoogleAccountPassword(accountId: string, password: string): Promise<{ message: string }> {
+    const response = await this.client.post(`/google-accounts/${accountId}/password`, { password });
+    return response.data;
+  }
+
+  async checkGoogleAccountPassword(accountId: string): Promise<{ has_password: boolean }> {
+    const response = await this.client.get(`/google-accounts/${accountId}/password/check`);
+    return response.data;
+  }
+
+  async verifyGoogleAccountPassword(accountId: string, password: string): Promise<{ valid: boolean; message?: string }> {
+    const response = await this.client.post(`/google-accounts/${accountId}/password/verify`, { password });
     return response.data;
   }
 }

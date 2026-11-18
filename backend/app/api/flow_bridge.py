@@ -2,13 +2,22 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
 from app.db.session import get_db
 from app.core.security import get_current_active_user
 from app.models import User, Project, Episode, Scene, GoogleAccount, FlowTask
-from app.schemas import FlowTaskCreate, FlowTaskUpdate, FlowTaskResponse, PaginationParams, PaginatedResponse
+from app.schemas import FlowTaskCreate, FlowTaskUpdate, FlowTaskResponse, FlowTaskRetryRequest, FlowTaskBrowserExecuteRequest, PaginationParams, PaginatedResponse
+from app.services.google_account_fallback import (
+    AllGoogleAccountsFailed,
+    GoogleServiceUnavailable,
+    execute_flow_task,
+    get_candidate_accounts,
+    is_locally_usable,
+)
+from app.services.browser_login import execute_flow_task_via_browser
 
 router = APIRouter(prefix="/flow", tags=["flow-bridge"])
 
@@ -58,6 +67,20 @@ async def create_flow_task(
         project_id=project_id,
         **task_data.model_dump()
     )
+    # Google-account fallback: bind the task to the account actually in use.
+    # No account given -> auto-pick the first locally usable (CONNECTED +
+    # decryptable tokens) account, same "first working candidate" idea as
+    # the LLM provider fallback. No usable account -> task is still created
+    # (execute/retry will return the honest error); nothing is hidden.
+    if task_data.google_account_id:
+        task.active_account_id = task_data.google_account_id
+    else:
+        candidates = await get_candidate_accounts(db, current_user.id)
+        usable = next((a for a in candidates if is_locally_usable(a)), None)
+        if usable is not None:
+            task.google_account_id = usable.id
+            task.active_account_id = usable.id
+    task.fallback_history = []
     db.add(task)
     await db.commit()
     await db.refresh(task)
@@ -172,6 +195,18 @@ async def update_flow_task(
 
     update_data = task_data.model_dump(exclude_unset=True)
 
+    # Switching the bound Google account must stay inside the user's own accounts.
+    if "google_account_id" in update_data and update_data["google_account_id"]:
+        result = await db.execute(
+            select(GoogleAccount).where(and_(
+                GoogleAccount.id == update_data["google_account_id"],
+                GoogleAccount.user_id == current_user.id
+            ))
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Google account not found")
+        update_data["active_account_id"] = update_data["google_account_id"]
+
     # If status changed to completed, set completed_at
     if "status" in update_data and update_data["status"] == "completed" and task.completed_at is None:
         task.completed_at = datetime.utcnow()
@@ -208,6 +243,153 @@ async def delete_flow_task(
 
     await db.delete(task)
     await db.commit()
+
+
+async def _load_flow_task_for_user(
+    project_id: UUID, task_id: UUID, db: AsyncSession, current_user: User
+) -> FlowTask:
+    result = await db.execute(
+        select(Project).where(and_(Project.id == project_id, Project.owner_id == current_user.id))
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+    result = await db.execute(
+        select(FlowTask).where(and_(FlowTask.id == task_id, FlowTask.project_id == project_id))
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Flow task not found")
+    return task
+
+
+@router.post("/{project_id}/tasks/{task_id}/execute", response_model=FlowTaskResponse)
+async def execute_flow_task_endpoint(
+    project_id: UUID,
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Bind the task to a working Google account, falling back automatically:
+    validate the bound account's token (refresh if expired); on quota /
+    429 / invalid token / refresh failure, try the user's next CONNECTED
+    account until one works. All attempts are recorded in
+    task.fallback_history; if every account fails the task is marked failed
+    with the per-account reasons (HTTP 502, honest error — never silent).
+    Google itself unreachable -> 502 immediately, no fallback (switching
+    accounts cannot fix that).
+    """
+    task = await _load_flow_task_for_user(project_id, task_id, db, current_user)
+    task.status = "pending"
+    task.error_message = None
+    await db.commit()
+    try:
+        await execute_flow_task(db, task, current_user.id, preferred_id=task.google_account_id)
+    except AllGoogleAccountsFailed as e:
+        await db.refresh(task)
+        raise HTTPException(status_code=502, detail=str(e))
+    except GoogleServiceUnavailable as e:
+        task.status = "failed"
+        task.error_message = str(e)
+        await db.commit()
+        await db.refresh(task)
+        raise HTTPException(status_code=502, detail=str(e))
+    await db.refresh(task)
+    return task
+
+
+@router.post("/{project_id}/tasks/{task_id}/retry", response_model=FlowTaskResponse)
+async def retry_flow_task_endpoint(
+    project_id: UUID,
+    task_id: UUID,
+    body: Optional[FlowTaskRetryRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Manual retry of a failed task, with the same automatic account fallback.
+    Optionally start from a specific account (google_account_id); otherwise
+    retries from the originally bound account. Only failed tasks can be
+    retried (409 otherwise). Fallback history is appended, never wiped.
+    """
+    body = body or FlowTaskRetryRequest()
+    task = await _load_flow_task_for_user(project_id, task_id, db, current_user)
+    if task.status != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only failed tasks can be retried (current status: {task.status})",
+        )
+    preferred_id = body.google_account_id or task.google_account_id
+    if body.google_account_id:
+        result = await db.execute(
+            select(GoogleAccount).where(and_(
+                GoogleAccount.id == body.google_account_id,
+                GoogleAccount.user_id == current_user.id
+            ))
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Google account not found")
+    task.status = "pending"
+    task.error_message = None
+    await db.commit()
+    try:
+        await execute_flow_task(db, task, current_user.id, preferred_id=preferred_id)
+    except AllGoogleAccountsFailed as e:
+        await db.refresh(task)
+        raise HTTPException(status_code=502, detail=str(e))
+    except GoogleServiceUnavailable as e:
+        task.status = "failed"
+        task.error_message = str(e)
+        await db.commit()
+        await db.refresh(task)
+        raise HTTPException(status_code=502, detail=str(e))
+    await db.refresh(task)
+    return task
+
+
+@router.post("/{project_id}/tasks/{task_id}/execute-browser", response_model=FlowTaskResponse)
+async def execute_flow_task_browser_endpoint(
+    project_id: UUID,
+    task_id: UUID,
+    body: Optional[FlowTaskBrowserExecuteRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Jalur login BROWSER (Di order 2026-11-17 22:22 WIB): jalankan task Flow
+    lewat browser Chromium per akun — login Google biasa (email + password
+    tersimpan terenkripsi), TANPA Cloud Console (tanpa client_id/secret).
+
+    Per akun: login browser (sesi persisten per akun, dipakai ulang bila
+    masih hidup) -> submit prompt task ke Google Flow. Bila satu akun gagal
+    (tanpa password / login ditolak / challenge 2FA-captcha / Flow memblokir
+    otomasi), OTOMATIS pindah ke akun CONNECTED berikutnya milik user yang
+    sama; semua percobaan tercatat di task.fallback_history. Semua akun
+    gagal -> 502 jujur dengan alasan per akun; task berstatus failed.
+    Sukses -> task "generating" (video masih dirender di Flow; selesai
+    lewat import-results). Mode manual (export-prompts) tetap tersedia.
+    """
+    body = body or FlowTaskBrowserExecuteRequest()
+    task = await _load_flow_task_for_user(project_id, task_id, db, current_user)
+    task.status = "pending"
+    task.error_message = None
+    await db.commit()
+    try:
+        await execute_flow_task_via_browser(
+            db, task, current_user.id, preferred_id=task.google_account_id,
+            force_relogin=body.force_relogin,
+        )
+    except AllGoogleAccountsFailed as e:
+        await db.refresh(task)
+        raise HTTPException(status_code=502, detail=str(e))
+    except GoogleServiceUnavailable as e:
+        task.status = "failed"
+        task.error_message = str(e)
+        await db.commit()
+        await db.refresh(task)
+        raise HTTPException(status_code=502, detail=str(e))
+    await db.refresh(task)
+    return task
 
 
 @router.post("/{project_id}/export-prompts")
@@ -262,7 +444,7 @@ async def export_prompts_for_flow(
                 "type": a.asset_type.value,
                 "file_path": a.file_path,
                 "file_name": a.file_name,
-                "metadata": a.metadata
+                "metadata": a.asset_metadata
             }
             for a in assets
         ],
@@ -287,17 +469,26 @@ async def export_prompts_for_flow(
     return export_data
 
 
+class ImportResultsRequest(BaseModel):
+    """Body for import-results (matches what the frontend sends as JSON)."""
+
+    task_id: UUID
+    output_files: List[str]
+
+
 @router.post("/{project_id}/import-results")
 async def import_flow_results(
     project_id: UUID,
-    task_id: UUID,
-    output_files: List[str],
+    body: ImportResultsRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Import generated video files from Google Flow into the project.
+    Only files that actually exist on disk are imported; missing files -> 400.
     """
+    task_id = body.task_id
+    output_files = body.output_files
     # Verify project ownership
     result = await db.execute(
         select(Project).where(and_(Project.id == project_id, Project.owner_id == current_user.id))
@@ -312,6 +503,15 @@ async def import_flow_results(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Flow task not found")
+
+    # Validate that every output file actually exists (F-M7: no phantom assets)
+    import os
+    missing = [f for f in output_files if not os.path.exists(f)]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Output file(s) not found on disk: {missing}",
+        )
 
     # Update task with output files
     task.output_files = output_files
@@ -345,7 +545,7 @@ async def import_flow_results(
             asset_type=asset_type,
             file_path=file_path,
             file_name=file_name,
-            metadata={"flow_task_id": str(task_id)}
+            asset_metadata={"flow_task_id": str(task_id)}
         )
         db.add(asset)
 
