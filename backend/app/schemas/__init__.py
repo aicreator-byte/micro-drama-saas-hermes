@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from app.models import (
     UserRole, ProjectStatus, EpisodeStatus, SceneStatus,
     GoogleAccountStatus, AssetType, PromptType,
@@ -118,6 +118,10 @@ class SeriesBibleUpdate(SeriesBibleBase):
 class SeriesBibleResponse(SeriesBibleBase):
     id: UUID
     project_id: UUID
+    # 'manual' = dibuat/diubah lewat API bible manual; 'auto' = ditulis
+    # auto-generate. Dipakai langkah 1 auto-generate untuk melindungi
+    # bible manual dari timpa diam-diam.
+    source: Optional[str] = "manual"
     created_at: datetime
     updated_at: datetime
 
@@ -581,6 +585,26 @@ class AutoGenerateCreate(BaseSchema):
     genre: Optional[str] = None
     num_episodes: int = Field(default=30, ge=1, le=50)
     premise: Optional[str] = None
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _title_must_not_be_blank(cls, v):
+        """Judul hanya-spasi ditolak: strip dulu, kosong = 422."""
+        if isinstance(v, str):
+            v = v.strip()
+        if not v:
+            raise ValueError("title must not be blank")
+        return v
+
+    @field_validator("genre", "premise", mode="before")
+    @classmethod
+    def _blank_means_none(cls, v):
+        """Genre/premis hanya-spasi diperlakukan sebagai tidak diisi
+        (genre kosong = ditebak AI dari judul, bukan default 'drama')."""
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
 
 
 class AutoGenerateStepResponse(BaseSchema):

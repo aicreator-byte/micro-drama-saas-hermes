@@ -126,6 +126,11 @@ class SeriesBible(Base):
     visual_style: Mapped[str] = mapped_column(String(255), nullable=True)
     ending_direction: Mapped[str] = mapped_column(Text, nullable=True)
     episode_structure: Mapped[dict] = mapped_column(JSON, nullable=True)
+    # Asal bible: 'manual' (dibuat/diubah lewat API bible manual) atau
+    # 'auto' (ditulis auto-generate). Langkah 1 auto-generate TIDAK
+    # menimpa bible 'manual' yang berisi main_plot (lihat auto_generate).
+    # Default 'manual' agar bible lama (pra-migrasi) ikut terlindungi.
+    source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

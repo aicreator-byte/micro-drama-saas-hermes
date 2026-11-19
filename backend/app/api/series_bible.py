@@ -34,7 +34,7 @@ async def create_series_bible(
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Series Bible already exists for this project")
 
-    bible = SeriesBible(project_id=project_id, **bible_data.model_dump())
+    bible = SeriesBible(project_id=project_id, source="manual", **bible_data.model_dump())
     db.add(bible)
     await db.commit()
     await db.refresh(bible)
@@ -88,6 +88,9 @@ async def update_series_bible(
     for field, value in update_data.items():
         setattr(bible, field, value)
 
+    # Perubahan manual apa pun menandai bible sebagai manual (dilindungi
+    # dari timpa auto-generate).
+    bible.source = "manual"
     bible.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(bible)

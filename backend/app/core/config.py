@@ -1,7 +1,17 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+# .env dibaca relatif ke direktori backend ini, BUKAN CWD proses.
+# Server yang dijalankan dari direktori lain (mis. repo root) sebelumnya
+# diam-diam kehilangan key dari .env (NVIDIA_API_KEY dkk. jadi string
+# kosong) — sekarang .env selalu ditemukan. load_dotenv juga mengisi
+# os.environ agar kode yang memakai os.getenv langsung (mis. proxy di
+# ai_client) ikut kebagian nilai .env.
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+load_dotenv(BACKEND_DIR / ".env")
 
 
 class Settings(BaseSettings):
@@ -67,7 +77,7 @@ class Settings(BaseSettings):
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
 
     class Config:
-        env_file = ".env"
+        env_file = BACKEND_DIR / ".env"
         case_sensitive = True
 
 

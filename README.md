@@ -18,6 +18,24 @@ A full-stack SaaS platform for creating micro drama series from concept to final
 - **Asset Manager**: Upload and organize production assets (images, video, audio, subtitles)
 - **Post-Production**: FFmpeg-based video assembly and subtitle burning
 
+## Auto-Generate (title in → full series out)
+
+Give only a title and the AI fills everything, step by step: **Series Bible → Characters → Locations → Episodes → Video Prompts** (1–50 episodes). Video itself is NOT generated — the prompts are used manually in Google Flow.
+
+- **Async with live progress**: `POST /api/v1/projects/{id}/auto-generate` returns **202 Accepted** immediately and the job runs in the background; the modal polls `GET …/auto-generate/{job_id}` every 2s and shows per-step status plus a summary with real numbers (e.g. `created count: 5`). A failed step can be retried alone (`POST …/retry/{step_key}`).
+- **Genre inference**: if you leave Genre empty, step 1 asks the LLM to guess it from the title (romance, drama, thriller, …). If the guess fails, the job honestly records genre `unknown` — it never silently defaults to "drama".
+- **Prompt chunking**: video prompts are generated in chunks of 5 episodes per LLM call (max 4000 tokens each), with per-chunk coverage validation — a 30-episode job no longer risks truncation from a single 8000-token call.
+- **Manual bible protection**: a Series Bible created/edited by hand (`source: "manual"`) is never overwritten by auto-generate; the LLM outline is still used to create the episodes. Auto-generated bibles are marked `source: "auto"`.
+- **Transactional steps**: if a step fails halfway, its partial rows are rolled back — no half-written data recorded as success.
+- **Job title ≠ project title**: the title you type is the job's title; the project is never renamed silently. Blank-only titles are rejected (422 backend + form validation).
+
+## Google Accounts, fallback & browser login
+
+- **Google Accounts**: up to 20 per user; credentials (OAuth client id/secret, account passwords) are stored encrypted in Settings / per account. The Google OAuth redirect URI is configurable via env `GOOGLE_OAUTH_REDIRECT_URI` (default `http://localhost:3000/dashboard/google-accounts/callback`) — see `backend/.env.example`.
+- **Account fallback**: when an account fails (token refresh failed, Flow blocked, browser challenge), the next account is tried automatically; every attempt and its reason are recorded in `fallback_history`.
+- **Browser login** (no Google Cloud Console needed): each account logs into Google in its own persistent browser profile (`browser-profiles/`), then Flow is used manually in that browser. Login state requires positive evidence (a logged-in marker on the page) — an account is never reported `logged_in` just because no sign-in form was found (fixed 19 Nov 2026, see `backend/tests/test_browser_login.py`).
+- **Settings are admin-only**: `PATCH /api/v1/settings` returns 403 for non-admin users (AppSettings is one global row shared by all tenants); reading settings is allowed for any active user.
+
 ## Tech Stack
 
 - **Frontend**: Next.js 16, React 19, TypeScript, Tailwind CSS, Zustand
@@ -80,8 +98,11 @@ cp .env.example .env
 # Run database migrations
 alembic upgrade head
 
-# Start development server
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Start development server (ALWAYS via start.sh — it cds to the
+# backend dir first, so .env is found no matter where you run it from;
+# the app reads .env relative to the backend directory, not the CWD)
+./start.sh
+# …or explicitly: PORT=8001 ./start.sh
 ```
 
 #### Frontend
@@ -176,6 +197,15 @@ micro-drama-saas/hermes/
 - `POST /api/v1/prompts/generate` - Generate prompt with AI
 - `POST /api/v1/prompts/{project_id}/episodes/{episode_id}/scenes/{scene_id}/generate-all` - Generate all scene prompts
 
+### Auto-Generate
+- `POST /api/v1/projects/{id}/auto-generate` - Start auto-generate job (202, async; body: `title`, `genre?`, `num_episodes`, `premise?`)
+- `GET /api/v1/projects/{id}/auto-generate/{job_id}` - Poll job status + per-step progress
+- `POST /api/v1/projects/{id}/auto-generate/{job_id}/retry/{step_key}` - Retry one failed step (409 while running)
+
+### Settings
+- `GET /api/v1/settings` - Get app settings (secrets masked)
+- `PATCH /api/v1/settings` - Update settings (**admin only**, 403 otherwise)
+
 ### Google Accounts
 - `POST /api/v1/google-accounts` - Connect Google account (max 20 per user)
 - `GET /api/v1/google-accounts` - List accounts
@@ -235,22 +265,24 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ## Known Limitations
 
-1. **Story Engine** - Uses mock implementation; replace with actual LLM API calls
-2. **Google Flow Integration** - Manual export/import only; no automated browser automation
-3. **Video Generation** - Requires external AI video generation tools
+1. **Video Generation** — prompts are generated, but video is produced manually in Google Flow; there is no automated video generation or Flow submission from this app.
+2. **Google login is not verified end-to-end with a real account** — the fallback mechanism is tested with test accounts (browser reaches Google's real sign-in form, Google asks for verification / bot detection); a real login + real Flow video run have not been done from this VM.
+3. **No live per-step progress on very slow LLM calls** — the job polls fine, but a single LLM call can take minutes when the provider is slow (live smoke 19 Nov: a 1-episode job took ~7 min total).
 4. **Real-time Collaboration** - Not implemented
 5. **Payment/Billing** - Not implemented
 
-## Future Improvements
+## Future Improvements (not yet done)
 
-1. Integrate actual LLM APIs (OpenAI, Anthropic, etc.)
-2. Add browser automation for Google Flow
+1. ~~Integrate actual LLM APIs~~ — done (Nvidia NIM via Settings + `NVIDIA_API_KEY` env fallback)
+2. ~~Add browser automation for Google Flow~~ — done for login (persistent browser profiles + fallback); Flow video submission itself stays manual
 3. Implement real-time collaboration
 4. Add payment integration
 5. Mobile app (React Native)
 6. Advanced video editing timeline
 7. AI-powered character consistency checking
 8. Automated subtitle generation (Whisper)
+
+See `FUTURE-DEV-REPORT.md` for what was implemented on 19 Nov 2026 (async auto-generate, genre inference, prompt chunking, manual-bible protection, admin-only Settings, env-based redirect URI, CWD-independent `.env`) and what is still NOT VERIFIED.
 
 ## License
 

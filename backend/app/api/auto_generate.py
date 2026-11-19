@@ -1,18 +1,27 @@
 """Auto-Generate API — spec §5 (Fase 1 backend).
 
 One POST creates a job with 5 ordered steps (series_bible → characters →
-locations → episodes → prompts) and runs them sequentially, committing after
-each step so progress is visible via GET. A failed step stops the run; only
-that step can be retried, and re-running a job skips rows that already exist
-(no duplicates). Video is NOT generated here (spec §8): step 5 only writes
-Flow/Veo video *prompts*.
+locations → episodes → prompts) and runs them ASYNCHRONOUSLY in a
+background task: POST returns 202 immediately with the job, and the
+frontend polls GET for per-step progress (step status + result_summary
+are committed after each step). A failed step stops the run; only
+that step can be retried, and re-running a job skips rows that already
+exist (no duplicates). Video is NOT generated here (spec §8): step 5
+only writes Flow/Veo video *prompts*.
+
+Safety rules (future-dev 19 Nov 2026):
+- POST never changes the project title (request.title is the job title).
+- Step 1 never overwrites a manually created bible (source='manual').
+- A failed step rolls back its partial writes (no half-done rows).
+- Genre is never silently defaulted to 'drama': user value, else LLM
+  inference from the title, else honest label 'unknown'.
 """
 
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
@@ -29,7 +38,7 @@ from app.schemas import (
 from app.services.ai_client import (
     AIClient, AIProviderError,
     generate_series_outline, generate_characters, generate_locations,
-    generate_episode_video_prompts,
+    generate_episode_video_prompts, infer_genre_from_title,
 )
 from app.api.story_engine import _validate_series_output
 
@@ -42,6 +51,27 @@ MIN_CHARACTERS = 4
 MIN_LOCATIONS = 3
 DEFAULT_NUM_CHARACTERS = 5
 DEFAULT_NUM_LOCATIONS = 4
+
+
+def _session_factory():
+    """Session factory for background runs. Patchable in tests
+    (tests point it at their in-memory SQLite session factory)."""
+    from app.db.session import AsyncSessionLocal
+    return AsyncSessionLocal()
+
+
+async def _run_job_background(
+    job_id: UUID, project_id: UUID, user_id: UUID, start_order: int = 1,
+) -> None:
+    """Background runner: own session, own AIClient. Never raises out
+    (job FAILED status is the failure channel, not an exception)."""
+    async with _session_factory() as session:
+        job = await session.get(AutoGenerateJob, job_id)
+        project = await session.get(Project, project_id)
+        user = await session.get(User, user_id)
+        if not job or not project or not user:
+            return
+        await _run_steps_from(session, job, project, user, start_order)
 
 
 # ---------------------------------------------------------------- helpers
@@ -104,9 +134,29 @@ async def _outline_episodes(db: AsyncSession, job: AutoGenerateJob) -> list:
 
 
 # ---------------------------------------------------------------- steps
+async def _resolve_genre(db, job, ai_client):
+    """Genre untuk job ini: nilai user > tebakan LLM dari judul > label
+    jujur 'unknown'. Hasil disimpan ke job.genre agar langkah 2–5
+    konsisten. TIDAK PERNAH default diam-diam ke 'drama'."""
+    if job.genre:
+        return job.genre, "user"
+    inferred = await infer_genre_from_title(ai_client, job.title, job.premise)
+    if inferred:
+        job.genre = inferred
+        return inferred, "llm"
+    job.genre = "unknown"
+    return "unknown", "unknown"
+
+
 async def _run_step_series_bible(db, job, project, user, ai_client):
     """Step 1: LLM series outline → SeriesBible + Episode rows.
-    Returns (summary, skipped)."""
+    Returns (summary, skipped).
+
+    Bible manual (source='manual' + main_plot terisi) TIDAK PERNAH
+    ditimpa: outline LLM tetap dipakai untuk membuat Episode, tapi
+    field bible dibiarkan apa adanya dan summary menandai
+    bible_protected=True.
+    """
     result = await db.execute(select(SeriesBible).where(SeriesBible.project_id == project.id))
     bible = result.scalar_one_or_none()
     result = await db.execute(select(Episode).where(Episode.project_id == project.id))
@@ -115,10 +165,12 @@ async def _run_step_series_bible(db, job, project, user, ai_client):
     if bible and bible.main_plot and existing_episodes:
         return ({"reason": "already exists", "episode_count": len(existing_episodes)}, True)
 
+    genre, genre_source = await _resolve_genre(db, job, ai_client)
+
     llm_result = await generate_series_outline(
         ai_client=ai_client,
         premise=job.premise,
-        genre=job.genre or "drama",
+        genre=genre,
         themes=[],
         num_episodes=job.num_episodes,
         tone=None,
@@ -131,14 +183,19 @@ async def _run_step_series_bible(db, job, project, user, ai_client):
         raise AIProviderError("auto-generate", f"Invalid series output: {e}")
     series_bible_data = llm_result["series_bible"]
 
+    # Lindungi bible manual: hanya tulis bila bible belum ada, kosong,
+    # atau sebelumnya ditulis auto-generate.
+    bible_protected = bool(bible and bible.main_plot and (bible.source or "manual") == "manual")
     if not bible:
-        bible = SeriesBible(project_id=project.id, premise=job.premise)
+        bible = SeriesBible(project_id=project.id, premise=job.premise, source="auto")
         db.add(bible)
         await db.flush()
-    bible.main_plot = series_bible_data.get("main_plot")
-    bible.subplots = series_bible_data.get("subplots")
-    bible.episode_structure = series_bible_data.get("episode_structure")
-    bible.updated_at = datetime.utcnow()
+    if not bible_protected:
+        bible.main_plot = series_bible_data.get("main_plot")
+        bible.subplots = series_bible_data.get("subplots")
+        bible.episode_structure = series_bible_data.get("episode_structure")
+        bible.source = "auto"
+        bible.updated_at = datetime.utcnow()
 
     existing_numbers = {ep.episode_number for ep in existing_episodes}
     created, skipped = [], []
@@ -160,6 +217,12 @@ async def _run_step_series_bible(db, job, project, user, ai_client):
     return ({
         "created_episodes": created,
         "skipped_episodes": skipped,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+        "episode_count": len(episodes_data),
+        "genre": genre,
+        "genre_source": genre_source,
+        "bible_protected": bible_protected,
         "episodes": episodes_data,
     }, False)
 
@@ -177,7 +240,7 @@ async def _run_step_characters(db, job, project, user, ai_client):
     chars_data = await generate_characters(
         ai_client=ai_client,
         premise=job.premise,
-        genre=job.genre or "drama",
+        genre=job.genre or "unknown",
         main_plot=bible.main_plot if bible else None,
         num_characters=DEFAULT_NUM_CHARACTERS,
     )
@@ -205,7 +268,8 @@ async def _run_step_characters(db, job, project, user, ai_client):
         existing_names.add(name.lower())
         created.append(name)
 
-    return ({"created": created, "skipped": skipped}, False)
+    return ({"created": created, "skipped": skipped,
+             "created_count": len(created), "skipped_count": len(skipped)}, False)
 
 
 async def _run_step_locations(db, job, project, user, ai_client):
@@ -220,7 +284,7 @@ async def _run_step_locations(db, job, project, user, ai_client):
     locs_data = await generate_locations(
         ai_client=ai_client,
         premise=job.premise,
-        genre=job.genre or "drama",
+        genre=job.genre or "unknown",
         main_plot=bible.main_plot if bible else None,
         num_locations=DEFAULT_NUM_LOCATIONS,
     )
@@ -247,7 +311,8 @@ async def _run_step_locations(db, job, project, user, ai_client):
         existing_names.add(name.lower())
         created.append(name)
 
-    return ({"created": created, "skipped": skipped}, False)
+    return ({"created": created, "skipped": skipped,
+             "created_count": len(created), "skipped_count": len(skipped)}, False)
 
 
 async def _run_step_episodes(db, job, project, user, ai_client):
@@ -284,6 +349,7 @@ async def _run_step_episodes(db, job, project, user, ai_client):
     return ({
         "created_episodes": created,
         "total_episodes": len(existing_numbers),
+        "created_count": len(created),
     }, False)
 
 
@@ -325,7 +391,7 @@ async def _run_step_prompts(db, job, project, user, ai_client):
             "outline": ep.outline,
         } for ep in missing],
         series_title=project.title,
-        genre=job.genre,
+        genre=job.genre or "unknown",
         tone=bible.tone if bible else None,
         characters=[{"name": c.name} for c in characters],
         locations=[{"name": loc.name} for loc in locations],
@@ -350,7 +416,7 @@ async def _run_step_prompts(db, job, project, user, ai_client):
         ))
         created.append(ep.episode_number)
 
-    return ({"created_prompts": created}, False)
+    return ({"created_prompts": created, "created_count": len(created)}, False)
 
 
 STEP_RUNNERS = {
@@ -380,9 +446,21 @@ async def _run_steps_from(db, job, project, user, start_order: int = 1) -> None:
         step.status = AutoGenerateStepStatus.RUNNING
         step.error_message = None
         await db.commit()
+        # ID disimpan dulu: rollback di bawah meng-expire objek job/step.
+        step_id, job_id = step.id, job.id
         try:
             summary, skipped = await STEP_RUNNERS[step.step_key](db, job, project, user, ai_client)
         except Exception as e:  # AIProviderError, ValueError, or unexpected: stop the run
+            # Buang tulisan setengah jadi dari langkah yang gagal: commit
+            # di bawah ini HANYA boleh menyimpan status FAILED, bukan
+            # baris parsial langkah itu (status RUNNING sudah ter-commit
+            # di atas, jadi rollback hanya membatalkan tulisan langkah).
+            await db.rollback()
+            # Objek job/step sudah expired oleh rollback — muat ulang
+            # segar sebelum menandai FAILED. Mengubah atribut expired
+            # lalu commit memicu lazy-load yang gagal di AsyncSession.
+            step = await db.get(AutoGenerateStep, step_id)
+            job = await db.get(AutoGenerateJob, job_id)
             step.status = AutoGenerateStepStatus.FAILED
             step.error_message = str(e)
             step.completed_at = datetime.utcnow()
@@ -402,29 +480,35 @@ async def _run_steps_from(db, job, project, user, start_order: int = 1) -> None:
 
 # ---------------------------------------------------------------- endpoints
 @router.post("/{project_id}/auto-generate", response_model=AutoGenerateJobResponse,
-             status_code=status.HTTP_201_CREATED)
+             status_code=status.HTTP_202_ACCEPTED)
 async def create_auto_generate_job(
     project_id: UUID,
     request: AutoGenerateCreate,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Create an auto-generate job and run it synchronously, step by step.
-    Input is just a title (+ genre / episode count / premise); the job fills
-    the series bible, characters, locations, episodes and video prompts."""
+    """Create an auto-generate job and run it in the background.
+    Returns 202 immediately; poll GET for per-step progress.
+    Input is just a title (+ genre / episode count / premise); the job
+    fills the series bible, characters, locations, episodes and video
+    prompts. The project title is NEVER changed here (request.title is
+    the job title only)."""
     project = await _get_project_or_404(db, project_id, current_user.id)
 
-    if request.title and request.title != project.title:
-        project.title = request.title
     if request.genre:
         project.genre = request.genre
-    project.updated_at = datetime.utcnow()
+        project.updated_at = datetime.utcnow()
 
     job = AutoGenerateJob(
         project_id=project.id,
         user_id=current_user.id,
         title=request.title,
-        genre=request.genre or project.genre,
+        # Genre job HANYA dari request: None = ditebak LLM dari judul di
+        # langkah 1 (bukan warisan project.genre — itu bisa jadi default
+        # 'Drama' form proyek, dan menebak diam-diam dari situ sama
+        # saja dengan default diam-diam).
+        genre=request.genre,
         num_episodes=request.num_episodes,
         premise=request.premise or request.title,
     )
@@ -438,8 +522,7 @@ async def create_auto_generate_job(
     await db.commit()
     await db.refresh(job)
 
-    await _run_steps_from(db, job, project, current_user, start_order=1)
-    await db.refresh(job)
+    background.add_task(_run_job_background, job.id, project.id, current_user.id, 1)
     return _job_to_response(job)
 
 
@@ -461,11 +544,14 @@ async def retry_auto_generate_step(
     project_id: UUID,
     job_id: UUID,
     step_key: str,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Retry one failed step, then continue with the steps after it.
-    Completed/skipped steps are kept untouched."""
+    Completed/skipped steps are kept untouched. Runs in the background;
+    the response already shows status 'running' so the frontend keeps
+    polling instead of treating the job as terminally failed."""
     project = await _get_project_or_404(db, project_id, current_user.id)
     job = await _get_job_or_404(db, project.id, job_id)
 
@@ -479,11 +565,17 @@ async def retry_auto_generate_step(
             status_code=400,
             detail=f"Only a failed step can be retried (step is {step.status.value})",
         )
+    if job.status == AutoGenerateJobStatus.RUNNING:
+        raise HTTPException(status_code=409, detail="Job is still running")
 
     step.status = AutoGenerateStepStatus.PENDING
     step.error_message = None
+    job.status = AutoGenerateJobStatus.RUNNING
+    job.error_message = None
+    job.completed_at = None
     await db.commit()
-
-    await _run_steps_from(db, job, project, current_user, start_order=step.step_order)
     await db.refresh(job)
+
+    background.add_task(
+        _run_job_background, job.id, project.id, current_user.id, step.step_order)
     return _job_to_response(job)

@@ -609,6 +609,11 @@ async def generate_locations(
 SYSTEM_PROMPT_VIDEO_PROMPTS = """You are an expert video prompt engineer for AI video generation (Google Flow / Veo style). Write one cinematic video generation prompt per episode.
 Return ONLY valid JSON matching the specified schema. No markdown, no explanations."""
 
+# Langkah 5 dipanggil per chunk kecil, bukan satu call untuk semua episode
+# (satu call max_tokens=8000 terpotong di job 30 episode).
+PROMPT_CHUNK_SIZE = 5
+PROMPT_CHUNK_MAX_TOKENS = 4000
+
 VIDEO_PROMPTS_GENERATION_PROMPT = """Series: {series_title}
 Genre: {genre}
 Tone: {tone}
@@ -640,7 +645,42 @@ async def generate_episode_video_prompts(
     characters: Optional[list[dict]] = None,
     locations: Optional[list[dict]] = None,
 ) -> list[dict]:
-    """Generate one Flow/Veo video prompt per episode, in a single LLM call."""
+    """Generate one Flow/Veo video prompt per episode, in chunks of
+    PROMPT_CHUNK_SIZE episodes per LLM call.
+
+    Satu call untuk semua episode (max_tokens=8000) terpotong di job
+    30 episode — tiap chunk divalidasi coverage-nya sendiri sebelum
+    lanjut, jadi episode yang hilang ketahuan di chunk-nya, bukan di
+    akhir.
+    """
+    all_prompts: list[dict] = []
+    for start in range(0, len(episodes), PROMPT_CHUNK_SIZE):
+        chunk = episodes[start:start + PROMPT_CHUNK_SIZE]
+        chunk_prompts = await _generate_video_prompts_chunk(
+            ai_client, chunk, series_title, genre, tone, characters, locations,
+        )
+        by_number = {int(p["episode_number"]): p for p in chunk_prompts}
+        missing = [e.get("episode_number") for e in chunk
+                   if int(e["episode_number"]) not in by_number]
+        if missing:
+            raise AIProviderError(
+                "nvidia",
+                f"LLM returned no prompt for episode(s): {missing}",
+            )
+        all_prompts.extend(chunk_prompts)
+    return all_prompts
+
+
+async def _generate_video_prompts_chunk(
+    ai_client: AIClient,
+    episodes: list[dict],
+    series_title: str,
+    genre: Optional[str],
+    tone: Optional[str],
+    characters: Optional[list[dict]] = None,
+    locations: Optional[list[dict]] = None,
+) -> list[dict]:
+    """One LLM call for a small chunk of episodes (<= PROMPT_CHUNK_SIZE)."""
     eps_str = "\n".join(
         f"- Episode {e.get('episode_number')}: {e.get('title', '')} — {e.get('outline', '')}"
         for e in episodes
@@ -651,14 +691,14 @@ async def generate_episode_video_prompts(
         {"role": "system", "content": SYSTEM_PROMPT_VIDEO_PROMPTS},
         {"role": "user", "content": VIDEO_PROMPTS_GENERATION_PROMPT.format(
             series_title=series_title,
-            genre=genre or "drama",
+            genre=genre or "unknown",
             tone=tone or "dramatic",
             characters=chars_str,
             locations=locs_str,
             episodes=eps_str,
         )},
     ]
-    result = await ai_client.chat_completion(messages, temperature=0.7, max_tokens=8000)
+    result = await ai_client.chat_completion(messages, temperature=0.7, max_tokens=PROMPT_CHUNK_MAX_TOKENS)
     try:
         parsed = json.loads(_strip_json_fence(result["content"]))
         if not isinstance(parsed, list) or not parsed:
@@ -681,3 +721,50 @@ async def generate_episode_video_prompts(
         logger.error(f"Failed to parse LLM video-prompts response: {e}")
         logger.debug(f"Raw content: {result['content'][:500]}")
         raise AIProviderError("nvidia", f"Invalid JSON response: {e}")
+
+
+# --- Genre inference (auto-generate langkah 1) -------------------------
+# Genre TIDAK PERNAH default diam-diam ke "drama": bila user tidak isi,
+# ditebak dari judul via satu call LLM kecil; bila tebakan gagal/tidak
+# dikenali, pemanggil memakai label jujur "unknown".
+GENRE_CANDIDATES = (
+    "romance", "drama", "thriller", "comedy", "fantasy", "action",
+    "horror", "family", "crime", "historical", "sci-fi", "mystery",
+)
+
+GENRE_INFERENCE_PROMPT = """Judul serial: {title}
+Premis: {premise}
+
+Tebak SATU genre yang paling cocok untuk serial ini. Jawab HANYA satu
+kata dari daftar ini (tanpa penjelasan, tanpa tanda baca):
+romance, drama, thriller, comedy, fantasy, action, horror, family,
+crime, historical, sci-fi, mystery.
+Bila tidak ada yang cocok, jawab: unknown"""
+
+
+async def infer_genre_from_title(
+    ai_client: AIClient,
+    title: str,
+    premise: Optional[str] = None,
+) -> Optional[str]:
+    """Tebak genre dari judul (+ premis) via LLM. Kembalikan satu label
+    dari GENRE_CANDIDATES, atau None bila LLM gagal / jawaban tidak
+    dikenali — pemanggil memakai label jujur 'unknown', bukan 'drama'."""
+    messages = [
+        {"role": "system", "content": "You classify TV series genres. Answer with exactly one word."},
+        {"role": "user", "content": GENRE_INFERENCE_PROMPT.format(
+            title=title, premise=premise or "-")},
+    ]
+    try:
+        result = await ai_client.chat_completion(messages, temperature=0.3, max_tokens=100)
+    except AIProviderError as e:
+        logger.warning(f"Genre inference failed, leaving genre unknown: {e}")
+        return None
+    label = _strip_json_fence(result["content"]).strip().lower().strip("\"'.,")
+    label = label.split()[0] if label.split() else ""
+    if label in GENRE_CANDIDATES:
+        return label
+    if label == "unknown":
+        return None
+    logger.warning(f"Genre inference returned unrecognized label: {label!r}")
+    return None

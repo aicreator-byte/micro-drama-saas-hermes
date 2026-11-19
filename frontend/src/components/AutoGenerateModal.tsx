@@ -58,9 +58,26 @@ function extractErrorMessage(err: unknown): string {
 function summarizeStep(step: AutoGenerateStep): string | null {
   const summary = step.result_summary;
   if (!summary) return null;
-  const parts = Object.entries(summary)
-    .filter(([, v]) => typeof v === 'number' || typeof v === 'string')
-    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`);
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(summary)) {
+    const label = k.replace(/_/g, ' ');
+    if (typeof v === 'number' || typeof v === 'string') {
+      parts.push(`${label}: ${v}`);
+    } else if (Array.isArray(v)) {
+      if (k === 'episodes') {
+        // Outline lengkap dipakai langkah 4 — tampilkan jumlah saja.
+        parts.push(`${label}: ${v.length}`);
+      } else {
+        const names = v
+          .slice(0, 3)
+          .map((item) =>
+            typeof item === 'string' ? item : (item?.name ?? item?.title ?? JSON.stringify(item)),
+          )
+          .join(', ');
+        parts.push(`${label}: ${v.length}${names ? ` (${names}${v.length > 3 ? ', …' : ''})` : ''}`);
+      }
+    }
+  }
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
@@ -101,8 +118,10 @@ export function AutoGenerateModal({ isOpen, onClose, project, onCompleted }: Aut
     }
   }
 
-  // Poll job status while it is not terminal (backend runs sync, so this is
-  // normally a no-op — it only matters if the server ever returns early).
+  // Poll job status while it is not terminal: the backend runs the job
+  // in the background (POST returns 202) and this polls GET every 2s,
+  // so the per-step progress actually moves instead of showing only
+  // "generating".
   useEffect(() => {
     if (!job || !project || isTerminal(job.status)) return;
     const timer = setInterval(async () => {
@@ -191,13 +210,15 @@ export function AutoGenerateModal({ isOpen, onClose, project, onCompleted }: Aut
           <Input
             label="Judul"
             placeholder="My Amazing Micro Drama"
+            helperText="Judul job ini — judul proyek tidak diubah"
             value={formTitle}
             onChange={(e) => setFormTitle(e.target.value)}
             required
           />
           <Input
             label="Genre"
-            placeholder="Drama, Romance, Thriller..."
+            placeholder="Kosong = ditebak AI dari judul"
+            helperText="Kosong = AI menebak genre dari judul; isi sendiri bila sudah tahu"
             value={formGenre}
             onChange={(e) => setFormGenre(e.target.value)}
           />
@@ -235,7 +256,7 @@ export function AutoGenerateModal({ isOpen, onClose, project, onCompleted }: Aut
           {submitting && !job && (
             <div className="flex items-center gap-3 text-sm text-gray-600 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
               <Loader2 className="w-4 h-4 animate-spin text-purple-600" aria-hidden="true" />
-              Membuat job dan menjalankan 5 langkah… ini bisa memakan waktu beberapa menit.
+              Membuat job dan menjalankan 5 langkah di background… progres per langkah muncul di bawah. Ini bisa memakan waktu beberapa menit.
             </div>
           )}
 
