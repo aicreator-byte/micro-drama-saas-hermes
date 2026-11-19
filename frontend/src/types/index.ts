@@ -284,3 +284,41 @@ export interface AuthTokens {
   access_token: string;
   token_type: string;
 }
+
+// Auto-Generate (Fase 1 backend: POST /projects/{id}/auto-generate)
+export type AutoGenerateJobStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type AutoGenerateStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+export interface AutoGenerateCreate {
+  title: string;
+  genre?: string;
+  num_episodes?: number;
+  premise?: string;
+}
+
+export interface AutoGenerateStep {
+  id: string;
+  step_key: string;
+  step_order: number;
+  status: AutoGenerateStepStatus;
+  error_message: string | null;
+  result_summary: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface AutoGenerateJob {
+  id: string;
+  project_id: string;
+  title: string;
+  genre: string | null;
+  num_episodes: number;
+  premise: string | null;
+  status: AutoGenerateJobStatus;
+  error_message: string | null;
+  steps: AutoGenerateStep[];
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}

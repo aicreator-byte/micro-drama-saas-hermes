@@ -95,6 +95,23 @@ FLOW_BLOCK_MARKERS = (
     "verify you’re not a robot",
     "recaptcha",
 )
+# Penanda POSITIF sesi login di myaccount.google.com. Login HANYA
+# dinyatakan bila salah satu penanda ini ada di halaman. Tanpa bukti
+# positif -> belum login (False). Jangan pernah default True: halaman
+# kosong/error tanpa form sign-in BUKAN bukti login (bug false positive
+# 2026-11-19: akun palsu tercatat "logged_in" di session.json tanpa
+# pernah login, lalu gagal di Flow).
+LOGGED_IN_MARKERS = (
+    "#account-home",
+    "[data-logged-in]",
+    # Tombol avatar/akun di header Google (muncul hanya bila login).
+    '[aria-label*="Google Account"]',
+    # Menu navigasi halaman akun (hanya tampil bila login).
+    'a[href*="myaccount.google.com/personal-info"]',
+    'a[href*="myaccount.google.com/security"]',
+    # Foto profil akun Google.
+    'img[src*="googleusercontent.com"]',
+)
 
 
 def _is_network_error(exc: Exception) -> bool:
@@ -318,8 +335,12 @@ class PlaywrightBrowserDriver:
             return ""
 
     async def _is_logged_in(self, page) -> bool:
-        """Cek sesi: buka halaman akun; bila dialihkan ke form sign-in atau
-        form email masih tampil -> belum login."""
+        """Cek sesi: buka halaman akun; login HANYA bila ada BUKTI POSITIF
+        (penanda akun/avatar/menu di halaman, lihat LOGGED_IN_MARKERS).
+        Tanpa bukti positif — termasuk bila halaman tidak menunjukkan form
+        sign-in maupun penanda login — jawab False. Jangan pernah default
+        True: halaman kosong/error tanpa form login BUKAN bukti login
+        (bug false positive 2026-11-19)."""
         await page.goto(self.account_url, wait_until="domcontentloaded")
         await page.wait_for_timeout(1500)
         url = page.url.lower()
@@ -327,10 +348,10 @@ class PlaywrightBrowserDriver:
             return False
         if await page.locator('input[type="email"]:visible, #identifierId:visible').count():
             return False
-        if await page.locator("#account-home, [data-logged-in]").count():
-            return True
-        # Tidak ada form login -> anggap sesi hidup (myaccount tampil).
-        return True
+        for selector in LOGGED_IN_MARKERS:
+            if await page.locator(selector).count():
+                return True
+        return False
 
     async def ensure_logged_in(self, *, email: str, password: str,
                                force_relogin: bool = False) -> str:

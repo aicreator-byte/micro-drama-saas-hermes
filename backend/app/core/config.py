@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "nvidia")
     AI_MODEL: str = os.getenv("AI_MODEL", "nvidia/nemotron-3-ultra-550b-a55b")
     AI_API_KEY: str = os.getenv("AI_API_KEY", "")
+    # Fase 3 smoke live: ai_client baca NVIDIA_API_KEY via os.getenv;
+    # field harus dideklarasi agar Settings tidak menolaknya (extra_forbidden).
+    NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
 
     class Config:
         env_file = ".env"

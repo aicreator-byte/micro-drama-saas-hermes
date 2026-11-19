@@ -7,7 +7,7 @@ from app.db.session import init_db
 from app.api import (
     auth, projects, series_bible, characters, locations,
     episodes, scenes, prompts, google_accounts, flow_bridge,
-    assets, story_engine, settings as settings_api
+    assets, story_engine, settings as settings_api, auto_generate
 )
 
 
@@ -50,6 +50,7 @@ app.include_router(flow_bridge.router, prefix=settings.API_V1_PREFIX)
 app.include_router(assets.router, prefix=settings.API_V1_PREFIX)
 app.include_router(story_engine.router, prefix=settings.API_V1_PREFIX)
 app.include_router(settings_api.router, prefix=settings.API_V1_PREFIX)
+app.include_router(auto_generate.router, prefix=settings.API_V1_PREFIX)
 
 
 # Malformed UUIDs / values in path or body -> 400, not 500.

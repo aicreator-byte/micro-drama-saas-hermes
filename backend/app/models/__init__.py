@@ -397,7 +397,6 @@ class AppSettings(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
-
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -415,4 +414,79 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_user_created", "user_id", "created_at"),
         Index("ix_audit_project_created", "project_id", "created_at"),
+    )
+
+class AutoGenerateJobStatus(PyEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AutoGenerateStepStatus(PyEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+# Auto-generate job steps, in run order (spec §4):
+# 1 series_bible, 2 characters, 3 locations, 4 episodes, 5 prompts.
+AUTO_GENERATE_STEPS = [
+    ("series_bible", 1),
+    ("characters", 2),
+    ("locations", 3),
+    ("episodes", 4),
+    ("prompts", 5),
+]
+
+
+class AutoGenerateJob(Base):
+    """One auto-generate run for a project: title in, bible + cast +
+    locations + episodes + prompts out (spec §5)."""
+
+    __tablename__ = "auto_generate_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    genre: Mapped[str] = mapped_column(String(100), nullable=True)
+    num_episodes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    premise: Mapped[str] = mapped_column(Text, nullable=True)
+    status: Mapped[AutoGenerateJobStatus] = mapped_column(Enum(AutoGenerateJobStatus), default=AutoGenerateJobStatus.PENDING, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    project = relationship("Project", lazy="selectin")
+    steps = relationship("AutoGenerateStep", back_populates="job", lazy="selectin",
+                         cascade="all, delete-orphan", order_by="AutoGenerateStep.step_order")
+
+
+class AutoGenerateStep(Base):
+    """One step of an auto-generate job. result_summary holds small JSON
+    (counts, names, and — for step 1 — the episode outline list so step 4
+    can materialize episodes even on retry)."""
+
+    __tablename__ = "auto_generate_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("auto_generate_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    step_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[AutoGenerateStepStatus] = mapped_column(Enum(AutoGenerateStepStatus), default=AutoGenerateStepStatus.PENDING, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    result_summary: Mapped[dict] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    job = relationship("AutoGenerateJob", back_populates="steps", lazy="selectin")
+
+    __table_args__ = (
+        UniqueConstraint("job_id", "step_key", name="uq_job_step"),
+        Index("ix_step_job_order", "job_id", "step_order"),
     )

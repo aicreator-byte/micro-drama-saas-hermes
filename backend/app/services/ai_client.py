@@ -110,8 +110,13 @@ class AIClient:
         return normalized
 
     def _get_api_key(self, key_env: str) -> Optional[str]:
-        """Get API key from environment variable."""
-        return os.getenv(key_env)
+        """Get API key: process env dulu, fallback ke Settings (.env).
+
+        Nilai .env TIDAK masuk os.environ (pydantic-settings hanya isi
+        objek Settings), jadi os.getenv saja selalu None di deployment
+        normal — fallback ini yang membuat key dari .env terpakai.
+        """
+        return os.getenv(key_env) or getattr(settings, key_env, None)
 
     async def chat_completion(
         self,
@@ -489,5 +494,190 @@ async def generate_scene_breakdown(
         return parsed
     except (json.JSONDecodeError, ValueError) as e:
         logger.error(f"Failed to parse LLM scene response: {e}")
+        logger.debug(f"Raw content: {result['content'][:500]}")
+        raise AIProviderError("nvidia", f"Invalid JSON response: {e}")
+
+SYSTEM_PROMPT_CHARACTERS = """You are an expert TV series writer. Create the main cast for a series from the given premise and plot.
+Return ONLY valid JSON matching the specified schema. No markdown, no explanations."""
+
+CHARACTERS_GENERATION_PROMPT = """Premise: {premise}
+Genre: {genre}
+Series plot: {main_plot}
+
+Create {num_characters} main characters for this series as a JSON array with this exact structure per character:
+[
+  {{
+    "name": "Character Full Name",
+    "role": "protagonist|antagonist|supporting|love_interest|mentor|rival",
+    "physical_appearance": "Appearance description (60-100 words)",
+    "personality": "Personality traits (60-100 words)",
+    "background": "Character backstory (60-100 words)",
+    "costume": "Signature wardrobe / costume notes",
+    "consistency_instructions": "Visual consistency notes for image/video generation"
+  }}
+]
+
+Give every character a distinct, memorable name. Roles must include one protagonist and one antagonist (or central conflict figure)."""
+
+
+async def generate_characters(
+    ai_client: AIClient,
+    premise: str,
+    genre: str,
+    main_plot: Optional[str],
+    num_characters: int = 5,
+) -> list[dict]:
+    """Generate the main cast using LLM."""
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_CHARACTERS},
+        {"role": "user", "content": CHARACTERS_GENERATION_PROMPT.format(
+            premise=premise,
+            genre=genre or "drama",
+            main_plot=main_plot or "",
+            num_characters=num_characters,
+        )},
+    ]
+    result = await ai_client.chat_completion(messages, temperature=0.8, max_tokens=4000)
+    try:
+        parsed = json.loads(_strip_json_fence(result["content"]))
+        if not isinstance(parsed, list) or not parsed:
+            raise ValueError("Response is not a non-empty list")
+        for c in parsed:
+            if not isinstance(c, dict) or not str(c.get("name") or "").strip():
+                raise ValueError("Character entry is missing a name")
+        return parsed
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Failed to parse LLM characters response: {e}")
+        logger.debug(f"Raw content: {result['content'][:500]}")
+        raise AIProviderError("nvidia", f"Invalid JSON response: {e}")
+
+
+SYSTEM_PROMPT_LOCATIONS = """You are an expert TV series writer. Create the key shooting locations for a series from the given premise and plot.
+Return ONLY valid JSON matching the specified schema. No markdown, no explanations."""
+
+LOCATIONS_GENERATION_PROMPT = """Premise: {premise}
+Genre: {genre}
+Series plot: {main_plot}
+
+Create {num_locations} key locations for this series as a JSON array with this exact structure per location:
+[
+  {{
+    "name": "Location Name",
+    "description": "What this place is (60-100 words)",
+    "environment": "Physical environment / set details",
+    "lighting": "Typical lighting (e.g. warm evening, cold fluorescent)",
+    "atmosphere": "Mood / atmosphere of the place",
+    "consistency_instructions": "Visual consistency notes for image/video generation"
+  }}
+]
+
+Locations must be places where the story's key scenes happen (homes, workplaces, public places)."""
+
+
+async def generate_locations(
+    ai_client: AIClient,
+    premise: str,
+    genre: str,
+    main_plot: Optional[str],
+    num_locations: int = 4,
+) -> list[dict]:
+    """Generate the key locations using LLM."""
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_LOCATIONS},
+        {"role": "user", "content": LOCATIONS_GENERATION_PROMPT.format(
+            premise=premise,
+            genre=genre or "drama",
+            main_plot=main_plot or "",
+            num_locations=num_locations,
+        )},
+    ]
+    result = await ai_client.chat_completion(messages, temperature=0.8, max_tokens=4000)
+    try:
+        parsed = json.loads(_strip_json_fence(result["content"]))
+        if not isinstance(parsed, list) or not parsed:
+            raise ValueError("Response is not a non-empty list")
+        for loc in parsed:
+            if not isinstance(loc, dict) or not str(loc.get("name") or "").strip():
+                raise ValueError("Location entry is missing a name")
+        return parsed
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Failed to parse LLM locations response: {e}")
+        logger.debug(f"Raw content: {result['content'][:500]}")
+        raise AIProviderError("nvidia", f"Invalid JSON response: {e}")
+
+
+SYSTEM_PROMPT_VIDEO_PROMPTS = """You are an expert video prompt engineer for AI video generation (Google Flow / Veo style). Write one cinematic video generation prompt per episode.
+Return ONLY valid JSON matching the specified schema. No markdown, no explanations."""
+
+VIDEO_PROMPTS_GENERATION_PROMPT = """Series: {series_title}
+Genre: {genre}
+Tone: {tone}
+
+Main characters: {characters}
+Key locations: {locations}
+
+Episodes (write ONE video prompt per episode, using its outline):
+{episodes}
+
+Return a JSON array with this exact structure per episode:
+[
+  {{
+    "episode_number": 1,
+    "prompt_text": "Cinematic vertical video, 1-2 minutes: ... (80-150 words, describe visuals, camera movement, characters, actions, mood, lighting)",
+    "negative_prompt": "blurry, low quality, distorted, flickering, bad motion, watermark, text"
+  }}
+]
+
+Every episode_number in the input list must appear exactly once in the output. Prompts must be in the same language as the episode outlines."""
+
+
+async def generate_episode_video_prompts(
+    ai_client: AIClient,
+    episodes: list[dict],
+    series_title: str,
+    genre: Optional[str],
+    tone: Optional[str],
+    characters: Optional[list[dict]] = None,
+    locations: Optional[list[dict]] = None,
+) -> list[dict]:
+    """Generate one Flow/Veo video prompt per episode, in a single LLM call."""
+    eps_str = "\n".join(
+        f"- Episode {e.get('episode_number')}: {e.get('title', '')} — {e.get('outline', '')}"
+        for e in episodes
+    )
+    chars_str = ", ".join(c.get("name", "") for c in (characters or [])) or "None"
+    locs_str = ", ".join(l.get("name", "") for l in (locations or [])) or "None"
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT_VIDEO_PROMPTS},
+        {"role": "user", "content": VIDEO_PROMPTS_GENERATION_PROMPT.format(
+            series_title=series_title,
+            genre=genre or "drama",
+            tone=tone or "dramatic",
+            characters=chars_str,
+            locations=locs_str,
+            episodes=eps_str,
+        )},
+    ]
+    result = await ai_client.chat_completion(messages, temperature=0.7, max_tokens=8000)
+    try:
+        parsed = json.loads(_strip_json_fence(result["content"]))
+        if not isinstance(parsed, list) or not parsed:
+            raise ValueError("Response is not a non-empty list")
+        seen = set()
+        for p in parsed:
+            if not isinstance(p, dict):
+                raise ValueError("Prompt entry is not an object")
+            try:
+                num = int(p["episode_number"])
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("Prompt entry is missing a numeric episode_number")
+            if num in seen:
+                raise ValueError(f"Duplicate episode_number {num} in prompt response")
+            seen.add(num)
+            if not str(p.get("prompt_text") or "").strip():
+                raise ValueError(f"Prompt for episode {num} is empty")
+        return parsed
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error(f"Failed to parse LLM video-prompts response: {e}")
         logger.debug(f"Raw content: {result['content'][:500]}")
         raise AIProviderError("nvidia", f"Invalid JSON response: {e}")

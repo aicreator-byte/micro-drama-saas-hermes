@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { AuthTokens, User, Project, SeriesBible, Character, Location, Episode, Scene, SceneCharacter, Dialogue, Prompt, PromptType, GoogleAccount, FlowTask, AssetType, Asset, PaginatedResponse, StoryGenerationRequest, StoryGenerationResponse, SceneBreakdownRequest, SceneBreakdownResponse, PromptGenerationRequest, PromptGenerationResponse, ProviderConfig, AppSettingsResponse, AppSettingsUpdate, GoogleAuthURLResponse, GoogleOAuthCallbackResponse } from '@/types';
+import type { AuthTokens, User, Project, SeriesBible, Character, Location, Episode, Scene, SceneCharacter, Dialogue, Prompt, PromptType, GoogleAccount, FlowTask, AssetType, Asset, PaginatedResponse, StoryGenerationRequest, StoryGenerationResponse, SceneBreakdownRequest, SceneBreakdownResponse, PromptGenerationRequest, PromptGenerationResponse, ProviderConfig, AppSettingsResponse, AppSettingsUpdate, GoogleAuthURLResponse, GoogleOAuthCallbackResponse, AutoGenerateCreate, AutoGenerateJob } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -508,6 +508,22 @@ class ApiClient {
 
   async createEpisodesFromOutline(projectId: string, episodesData: Array<Record<string, unknown>>): Promise<{ created_episodes: number[]; count: number }> {
     const response = await this.client.post(`/story-engine/${projectId}/create-episodes`, episodesData);
+    return response.data;
+  }
+
+  // Auto-Generate endpoints (Fase 1 backend)
+  async createAutoGenerateJob(projectId: string, data: AutoGenerateCreate): Promise<AutoGenerateJob> {
+    const response = await this.client.post<AutoGenerateJob>(`/projects/${projectId}/auto-generate`, data);
+    return response.data;
+  }
+
+  async getAutoGenerateJob(projectId: string, jobId: string): Promise<AutoGenerateJob> {
+    const response = await this.client.get<AutoGenerateJob>(`/projects/${projectId}/auto-generate/${jobId}`);
+    return response.data;
+  }
+
+  async retryAutoGenerateStep(projectId: string, jobId: string, stepKey: string): Promise<AutoGenerateJob> {
+    const response = await this.client.post<AutoGenerateJob>(`/projects/${projectId}/auto-generate/${jobId}/retry/${stepKey}`);
     return response.data;
   }
 

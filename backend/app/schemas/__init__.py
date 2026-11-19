@@ -4,7 +4,8 @@ from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from app.models import (
     UserRole, ProjectStatus, EpisodeStatus, SceneStatus,
-    GoogleAccountStatus, AssetType, PromptType
+    GoogleAccountStatus, AssetType, PromptType,
+    AutoGenerateJobStatus, AutoGenerateStepStatus
 )
 
 
@@ -573,3 +574,37 @@ class PaginatedResponse(BaseSchema):
     page: int
     page_size: int
     total_pages: int
+
+# Auto-Generate schemas (spec §5)
+class AutoGenerateCreate(BaseSchema):
+    title: str = Field(..., min_length=1)
+    genre: Optional[str] = None
+    num_episodes: int = Field(default=30, ge=1, le=50)
+    premise: Optional[str] = None
+
+
+class AutoGenerateStepResponse(BaseSchema):
+    id: UUID
+    step_key: str
+    step_order: int
+    status: AutoGenerateStepStatus
+    error_message: Optional[str] = None
+    result_summary: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class AutoGenerateJobResponse(BaseSchema):
+    id: UUID
+    project_id: UUID
+    title: str
+    genre: Optional[str] = None
+    num_episodes: int
+    premise: Optional[str] = None
+    status: AutoGenerateJobStatus
+    error_message: Optional[str] = None
+    steps: List[AutoGenerateStepResponse] = []
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None

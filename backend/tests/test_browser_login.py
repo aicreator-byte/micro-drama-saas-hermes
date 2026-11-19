@@ -46,13 +46,28 @@ FLOW_PAGE = """<!doctype html><html><body>
 <div id="flow-submitted" style="display:none">submitted</div>
 </body></html>"""
 
+# Halaman akun TANPA form sign-in DAN tanpa penanda login — reproduksi bug
+# false positive 2026-11-19: halaman seperti ini (kosong/error) dulu
+# dianggap "logged_in" oleh _is_logged_in.
+ACCOUNT_BLANK_PAGE = """<!doctype html><html><body>
+<div>Welcome</div><p>Nothing here proves a login.</p>
+</body></html>"""
+
+# Halaman akun DENGAN penanda login positif.
+ACCOUNT_LOGGED_IN_PAGE = """<!doctype html><html><body>
+<div id="account-home" data-logged-in="1">My Account</div>
+</body></html>"""
+
 
 class _FakePages(BaseHTTPRequestHandler):
     def do_GET(self):
         page = {"/login": LOGIN_PAGE, "/account": ACCOUNT_PAGE,
+                "/account-blank": ACCOUNT_BLANK_PAGE,
+                "/account-logged-in": ACCOUNT_LOGGED_IN_PAGE,
                 "/flow": FLOW_PAGE}.get(self.path, "<html><body>404</body></html>")
         body = page.encode()
-        self.send_response(200 if self.path in ("/login", "/account", "/flow") else 404)
+        self.send_response(200 if self.path in ("/login", "/account", "/account-blank",
+                                                "/account-logged-in", "/flow") else 404)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -319,6 +334,40 @@ async def test_real_chromium_login_and_flow_submit(fake_google_server, tmp_path)
         assert await driver2.ensure_logged_in(email="real@test.com", password="pw") == "logged_in"
     finally:
         await driver2.close()
+
+
+@pytest.mark.asyncio
+async def test_is_logged_in_requires_positive_evidence(fake_google_server, tmp_path):
+    """False positive 2026-11-19: _is_logged_in dulu default True bila
+    halaman tidak menunjukkan form sign-in maupun penanda login, sehingga
+    akun palsu tercatat "logged_in" tanpa pernah login. Sekarang login
+    HANYA bila ada bukti positif (penanda akun); halaman tanpa bukti
+    apapun -> False, halaman dengan penanda login -> True."""
+    blank = PlaywrightBrowserDriver(
+        tmp_path / "blank-profile",
+        login_url=f"{fake_google_server}/login",
+        account_url=f"{fake_google_server}/account-blank",
+        flow_url=f"{fake_google_server}/flow",
+    )
+    try:
+        context = await blank._launch()
+        page = context.pages[0] if context.pages else await context.new_page()
+        assert await blank._is_logged_in(page) is False
+    finally:
+        await blank.close()
+
+    logged_in = PlaywrightBrowserDriver(
+        tmp_path / "logged-in-profile",
+        login_url=f"{fake_google_server}/login",
+        account_url=f"{fake_google_server}/account-logged-in",
+        flow_url=f"{fake_google_server}/flow",
+    )
+    try:
+        context = await logged_in._launch()
+        page = context.pages[0] if context.pages else await context.new_page()
+        assert await logged_in._is_logged_in(page) is True
+    finally:
+        await logged_in.close()
 
 
 @pytest.mark.asyncio

@@ -11,8 +11,10 @@ import { Textarea } from '@/components/ui/Textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { Modal } from '@/components/ui/Modal';
+import { AutoGenerateModal } from '@/components/AutoGenerateModal';
 import { formatDate, cn, getStatusColor } from '@/lib/utils';
-import { Plus, Search, Filter, MoreHorizontal, Edit, Trash2, FolderOpen } from 'lucide-react';
+import type { Project } from '@/types';
+import { Plus, Search, Filter, MoreHorizontal, Edit, Trash2, FolderOpen, Sparkles } from 'lucide-react';
 
 export default function ProjectsPage() {
   const { projects, fetchProjects, createProject, deleteProject, isLoading, currentProject, setCurrentProject } = useProjectStore();
@@ -25,6 +27,7 @@ export default function ProjectsPage() {
   const [newProjectData, setNewProjectData] = useState({ title: '', description: '', genre: '', themes: '' });
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [autoGenProject, setAutoGenProject] = useState<Project | null>(null);
 
   useEffect(() => {
     loadProjects();
@@ -206,6 +209,14 @@ export default function ProjectsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                      <button
+                        onClick={() => setAutoGenProject(project)}
+                        className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
+                        aria-label="Auto-Generate"
+                        title="Auto-Generate"
+                      >
+                        <Sparkles className="w-5 h-5" aria-hidden="true" />
+                      </button>
                       <Link
                         href={`/dashboard/projects/${project.id}`}
                         className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
@@ -262,6 +273,14 @@ export default function ProjectsPage() {
           )}
         </>
       )}
+
+      {/* Auto-Generate Modal */}
+      <AutoGenerateModal
+        isOpen={!!autoGenProject}
+        project={autoGenProject}
+        onClose={() => setAutoGenProject(null)}
+        onCompleted={() => window.location.reload()}
+      />
 
       {/* Create Project Modal */}
       <Modal
