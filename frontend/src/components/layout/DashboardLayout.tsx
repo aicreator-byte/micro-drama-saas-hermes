@@ -39,6 +39,7 @@ const navigation = [
   { name: 'Dialogues', href: '/dashboard/dialogues', icon: MessageSquare },
   { name: 'Prompts', href: '/dashboard/prompts', icon: Sparkles },
   { name: 'Flow Bridge', href: '/dashboard/flow', icon: PlugZap },
+  { name: 'Billing', href: '/dashboard/billing', icon: FileText },
   { name: 'Assets', href: '/dashboard/assets', icon: FileVideo },
   { name: 'Google Accounts', href: '/dashboard/google-accounts', icon: FileText },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },

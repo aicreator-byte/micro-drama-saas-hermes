@@ -1,8 +1,12 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { ReactNode, Suspense } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 
 export default function DashboardLayoutWrapper({ children }: { children: ReactNode }) {
-  return <DashboardLayout>{children}</DashboardLayout>;
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Memuat…</div>}>
+      <DashboardLayout>{children}</DashboardLayout>
+    </Suspense>
+  );
 }

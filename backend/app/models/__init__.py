@@ -495,3 +495,173 @@ class AutoGenerateStep(Base):
         UniqueConstraint("job_id", "step_key", name="uq_job_step"),
         Index("ix_step_job_order", "job_id", "step_order"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Future-dev round 2 (20 Nov 2026): billing, timeline, consistency, subtitles
+# ---------------------------------------------------------------------------
+
+class SubscriptionStatus(PyEnum):
+    INACTIVE = "inactive"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+
+
+class Subscription(Base):
+    """Langganan user. Provider SELALU 'test' (mode sandbox) — Di tidak
+    punya kartu kredit; tidak ada live key, tidak ada penagihan nyata."""
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    plan: Mapped[str] = mapped_column(String(50), nullable=False, default="free")
+    status: Mapped[SubscriptionStatus] = mapped_column(Enum(SubscriptionStatus), default=SubscriptionStatus.INACTIVE, nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="test")
+    provider_customer_id: Mapped[str] = mapped_column(String(255), nullable=True)
+    provider_subscription_id: Mapped[str] = mapped_column(String(255), nullable=True)
+    current_period_end: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("User", lazy="selectin")
+
+    __table_args__ = (UniqueConstraint("user_id", name="uq_subscription_user"),)
+
+
+class BillingEvent(Base):
+    """Audit trail event billing (checkout, webhook, cancel). Payload JSON
+    mentah — TIDAK PERNAH berisi nomor kartu / secret key."""
+
+    __tablename__ = "billing_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class VideoTimeline(Base):
+    """Timeline editing per episode: daftar clip (track) dalam JSON.
+    Satu timeline per episode. Clip: {id, track, start, duration,
+    prompt_id, scene_id, asset_id, label, transition}."""
+
+    __tablename__ = "video_timelines"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    episode_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="Main timeline")
+    clips: Mapped[List[dict]] = mapped_column(JSON, nullable=False, default=list)
+    duration_seconds: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    fps: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    resolution: Mapped[str] = mapped_column(String(20), nullable=False, default="1080x1920")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    episode = relationship("Episode", lazy="selectin")
+    project = relationship("Project", lazy="selectin")
+
+    __table_args__ = (UniqueConstraint("episode_id", name="uq_timeline_episode"),)
+
+
+class ConsistencyCheckStatus(PyEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class CharacterConsistencyCheck(Base):
+    """Hasil cek konsistensi karakter antar episode. issues: list
+    {character, episode_number, type, severity, description, suggestion}."""
+
+    __tablename__ = "character_consistency_checks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[ConsistencyCheckStatus] = mapped_column(Enum(ConsistencyCheckStatus), default=ConsistencyCheckStatus.RUNNING, nullable=False)
+    checked_episodes: Mapped[List[int]] = mapped_column(JSON, nullable=True)
+    issues: Mapped[List[dict]] = mapped_column(JSON, nullable=True)
+    issue_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    project = relationship("Project", lazy="selectin")
+
+
+class SubtitleJobStatus(PyEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SubtitleJob(Base):
+    """Job subtitle dari file audio/video lokal. segments: list
+    {start, end, text}. srt/vtt disimpan sebagai file di UPLOAD_DIR."""
+
+    __tablename__ = "subtitle_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    episode_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("episodes.id", ondelete="SET NULL"), nullable=True, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=True)
+    source_path: Mapped[str] = mapped_column(String(500), nullable=True)
+    status: Mapped[SubtitleJobStatus] = mapped_column(Enum(SubtitleJobStatus), default=SubtitleJobStatus.PENDING, nullable=False)
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="id")
+    engine: Mapped[str] = mapped_column(String(50), nullable=True)
+    model_size: Mapped[str] = mapped_column(String(20), nullable=False, default="tiny")
+    segments: Mapped[List[dict]] = mapped_column(JSON, nullable=True)
+    srt_path: Mapped[str] = mapped_column(String(500), nullable=True)
+    vtt_path: Mapped[str] = mapped_column(String(500), nullable=True)
+    error_message: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+
+    project = relationship("Project", lazy="selectin")
+    episode = relationship("Episode", lazy="selectin")
+
+
+class CollabRoomState(Base):
+    """State kolaborasi persisten per proyek (audit ronde 2, P1-2).
+
+    Versi edit kolaboratif disimpan di DB, bukan di memori proses, supaya
+    tahan restart dan konsisten antar worker. Presence per user ada di
+    CollabPresence. Broadcast WS live tetap per-worker (tanpa Redis);
+    lihat app/services/collab.py.
+    """
+
+    __tablename__ = "collab_room_states"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    project = relationship("Project", lazy="selectin")
+
+
+class CollabPresence(Base):
+    """Satu baris = satu user sedang online di room proyek.
+
+    Ditulis saat WS join/set_field, dihapus saat disconnect. Baris yang
+    updated_at-nya lebih tua dari PRESENCE_STALE_SECONDS dianggap basi
+    (proses mati mendadak tanpa disconnect bersih) dan dibersihkan saat
+    presence dibaca.
+    """
+
+    __tablename__ = "collab_presence"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    field: Mapped[str] = mapped_column(String(255), nullable=True)
+    color: Mapped[str] = mapped_column(String(20), nullable=False, default="#22D3EE")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    project = relationship("Project", lazy="selectin")

@@ -51,8 +51,12 @@ async def client(db):
     app.dependency_overrides[get_db] = override_get_db
     # Background auto-generate runs use their own session; in tests that
     # session must come from the same in-memory SQLite engine.
+    # (Sama untuk background cek konsistensi — audit ronde 2, P1-1.)
     from unittest.mock import patch
-    with patch("app.api.auto_generate._session_factory", lambda: TestingSessionLocal()):
+    with (
+        patch("app.api.auto_generate._session_factory", lambda: TestingSessionLocal()),
+        patch("app.api.consistency._session_factory", lambda: TestingSessionLocal()),
+    ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac

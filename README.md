@@ -202,6 +202,25 @@ micro-drama-saas/hermes/
 - `GET /api/v1/projects/{id}/auto-generate/{job_id}` - Poll job status + per-step progress
 - `POST /api/v1/projects/{id}/auto-generate/{job_id}/retry/{step_key}` - Retry one failed step (409 while running)
 
+### Round 2 — Collaboration, Billing, Timeline, Consistency, Subtitles (20 Nov 2026)
+- `WS /api/v1/projects/{id}/collab/ws?token=<JWT>` - Real-time presence + shared edits (messages: `presence` / `edit` / `update` / `ack` / `error`)
+- `GET /api/v1/projects/{id}/collab/presence` - Who is editing now (REST)
+- `POST /api/v1/projects/{id}/collab/edit` - Apply one shared edit (whitelisted fields only)
+- `GET /api/v1/billing/plans` - Plans Free/Pro/Studio (TEST MODE)
+- `GET /api/v1/billing/subscription` - Current subscription
+- `POST /api/v1/billing/checkout` - Test checkout session (no real charge)
+- `POST /api/v1/billing/webhook` - Test webhook, HMAC header `X-Test-Signature`
+- `POST /api/v1/billing/cancel` - Cancel back to Free
+- `GET/POST/PATCH/DELETE /api/v1/projects/{id}/episodes/{ep_id}/timeline` - Video timeline (clips)
+- `POST /api/v1/projects/{id}/episodes/{ep_id}/timeline/from-prompts` - Build timeline from video prompts (8 s/shot)
+- `POST /api/v1/projects/{id}/consistency-check` - Run character consistency check (rule-based + LLM)
+- `GET /api/v1/projects/{id}/consistency-checks` - Check history
+- `GET /api/v1/projects/subtitles/engine` - Whisper engine availability
+- `POST /api/v1/projects/{id}/subtitles` - Upload audio/video, transcribe in background
+- `POST /api/v1/projects/{id}/subtitles/from-segments` - Build SRT/VTT from transcript segments (no engine needed)
+- `GET /api/v1/projects/{id}/subtitles` - List subtitle jobs
+- `GET /api/v1/projects/{id}/subtitles/{job_id}/download?fmt=srt|vtt` - Download subtitle file
+
 ### Settings
 - `GET /api/v1/settings` - Get app settings (secrets masked)
 - `PATCH /api/v1/settings` - Update settings (**admin only**, 403 otherwise)
@@ -268,19 +287,30 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 1. **Video Generation** — prompts are generated, but video is produced manually in Google Flow; there is no automated video generation or Flow submission from this app.
 2. **Google login is not verified end-to-end with a real account** — the fallback mechanism is tested with test accounts (browser reaches Google's real sign-in form, Google asks for verification / bot detection); a real login + real Flow video run have not been done from this VM.
 3. **No live per-step progress on very slow LLM calls** — the job polls fine, but a single LLM call can take minutes when the provider is slow (live smoke 19 Nov: a 1-episode job took ~7 min total).
-4. **Real-time Collaboration** - Not implemented
-5. **Payment/Billing** - Not implemented
+4. **Billing is TEST MODE only** — no live Stripe key, no real charges (see below).
+5. **Mobile app not run on a device yet** — scaffold + `tsc` verified; not tested in Expo Go / emulator.
+
+## Future Improvements — round 2 (done 20 Nov 2026)
+
+All six items below are implemented in this leg; see `FUTURE-DEV-ROUND2-REPORT.md`.
+
+1. **Real-time collaboration** — WebSocket presence + shared edits (`/projects/{id}/collab/ws`, REST fallback `/collab/edit`); page `/dashboard/projects/[id]/collab`.
+2. **Payment integration (TEST MODE)** — plans Free/Pro/Studio, test checkout, HMAC webhook, cancel; no live key, no real charges; page `/dashboard/billing`.
+3. **Mobile app (React Native / Expo)** — `mobile/` scaffold: login, project list, project detail, trigger auto-generate + polling; `npm run typecheck` clean; NOT run on a device yet.
+4. **Advanced video editing timeline** — one timeline per episode (clips, tracks, transitions), auto-build from video prompts (8 s/shot); page `/dashboard/projects/[id]/timeline`.
+5. **AI-powered character consistency checking** — rule-based + LLM (same AIClient as auto-generate); page `/dashboard/projects/[id]/consistency`.
+6. **Automated subtitle generation (Whisper)** — local faster-whisper (tiny, `id`), SRT + VTT download; decode via ffmpeg CLI (PyAV 19 incompatibility workaround); page `/dashboard/projects/[id]/subtitles`.
 
 ## Future Improvements (not yet done)
 
 1. ~~Integrate actual LLM APIs~~ — done (Nvidia NIM via Settings + `NVIDIA_API_KEY` env fallback)
 2. ~~Add browser automation for Google Flow~~ — done for login (persistent browser profiles + fallback); Flow video submission itself stays manual
-3. Implement real-time collaboration
-4. Add payment integration
-5. Mobile app (React Native)
-6. Advanced video editing timeline
-7. AI-powered character consistency checking
-8. Automated subtitle generation (Whisper)
+3. ~~Implement real-time collaboration~~ — done 20 Nov 2026 (round 2)
+4. ~~Add payment integration~~ — done 20 Nov 2026, TEST MODE only (round 2)
+5. ~~Mobile app (React Native)~~ — scaffold done 20 Nov 2026 (round 2); device run NOT VERIFIED
+6. ~~Advanced video editing timeline~~ — done 20 Nov 2026 (round 2)
+7. ~~AI-powered character consistency checking~~ — done 20 Nov 2026 (round 2)
+8. ~~Automated subtitle generation (Whisper)~~ — done 20 Nov 2026 (round 2)
 
 See `FUTURE-DEV-REPORT.md` for what was implemented on 19 Nov 2026 (async auto-generate, genre inference, prompt chunking, manual-bible protection, admin-only Settings, env-based redirect URI, CWD-independent `.env`) and what is still NOT VERIFIED.
 

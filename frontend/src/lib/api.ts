@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
-import type { AuthTokens, User, Project, SeriesBible, Character, Location, Episode, Scene, SceneCharacter, Dialogue, Prompt, PromptType, GoogleAccount, FlowTask, AssetType, Asset, PaginatedResponse, StoryGenerationRequest, StoryGenerationResponse, SceneBreakdownRequest, SceneBreakdownResponse, PromptGenerationRequest, PromptGenerationResponse, ProviderConfig, AppSettingsResponse, AppSettingsUpdate, GoogleAuthURLResponse, GoogleOAuthCallbackResponse, AutoGenerateCreate, AutoGenerateJob } from '@/types';
+import type { AuthTokens, User, Project, SeriesBible, Character, Location, Episode, Scene, SceneCharacter, Dialogue, Prompt, PromptType, GoogleAccount, FlowTask, AssetType, Asset, PaginatedResponse, StoryGenerationRequest, StoryGenerationResponse, SceneBreakdownRequest, SceneBreakdownResponse, PromptGenerationRequest, PromptGenerationResponse, ProviderConfig, AppSettingsResponse, AppSettingsUpdate, GoogleAuthURLResponse, GoogleOAuthCallbackResponse, AutoGenerateCreate, AutoGenerateJob, BillingPlan, Subscription, VideoTimeline, TimelineClip, ConsistencyCheck, SubtitleJob, SubtitleSegment, CollabPresence } from '@/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -568,6 +568,102 @@ class ApiClient {
 
   async verifyGoogleAccountPassword(accountId: string, password: string): Promise<{ valid: boolean; message?: string }> {
     const response = await this.client.post(`/google-accounts/${accountId}/password/verify`, { password });
+    return response.data;
+  }
+
+  // Billing endpoints (round 2 — TEST MODE, tanpa pembayaran nyata)
+  async listBillingPlans(): Promise<BillingPlan[]> {
+    const response = await this.client.get<BillingPlan[]>('/billing/plans');
+    return response.data;
+  }
+
+  async getSubscription(): Promise<Subscription> {
+    const response = await this.client.get<Subscription>('/billing/subscription');
+    return response.data;
+  }
+
+  async createCheckout(plan: string): Promise<{ session_id: string; checkout_url: string; plan: BillingPlan; mode: string; note: string }> {
+    const response = await this.client.post('/billing/checkout', { plan });
+    return response.data;
+  }
+
+  async cancelSubscription(): Promise<Subscription> {
+    const response = await this.client.post<Subscription>('/billing/cancel');
+    return response.data;
+  }
+
+  // Timeline endpoints (round 2)
+  async getTimeline(projectId: string, episodeId: string): Promise<VideoTimeline> {
+    const response = await this.client.get<VideoTimeline>(`/projects/${projectId}/episodes/${episodeId}/timeline`);
+    return response.data;
+  }
+
+  async createTimeline(projectId: string, episodeId: string, data: { name?: string; clips?: TimelineClip[]; fps?: number; resolution?: string }): Promise<VideoTimeline> {
+    const response = await this.client.post<VideoTimeline>(`/projects/${projectId}/episodes/${episodeId}/timeline`, data);
+    return response.data;
+  }
+
+  async updateTimeline(projectId: string, episodeId: string, data: { name?: string; clips?: TimelineClip[]; fps?: number; resolution?: string }): Promise<VideoTimeline> {
+    const response = await this.client.patch<VideoTimeline>(`/projects/${projectId}/episodes/${episodeId}/timeline`, data);
+    return response.data;
+  }
+
+  async deleteTimeline(projectId: string, episodeId: string): Promise<void> {
+    await this.client.delete(`/projects/${projectId}/episodes/${episodeId}/timeline`);
+  }
+
+  async timelineFromPrompts(projectId: string, episodeId: string): Promise<VideoTimeline> {
+    const response = await this.client.post<VideoTimeline>(`/projects/${projectId}/episodes/${episodeId}/timeline/from-prompts`);
+    return response.data;
+  }
+
+  // Consistency check endpoints (round 2)
+  async runConsistencyCheck(projectId: string): Promise<ConsistencyCheck> {
+    const response = await this.client.post<ConsistencyCheck>(`/projects/${projectId}/consistency-check`);
+    return response.data;
+  }
+
+  async listConsistencyChecks(projectId: string): Promise<ConsistencyCheck[]> {
+    const response = await this.client.get<ConsistencyCheck[]>(`/projects/${projectId}/consistency-checks`);
+    return response.data;
+  }
+
+  // Subtitle endpoints (round 2)
+  async getSubtitleEngine(): Promise<{ engine: string | null; available: boolean; note: string | null }> {
+    const response = await this.client.get('/projects/subtitles/engine');
+    return response.data;
+  }
+
+  async listSubtitleJobs(projectId: string): Promise<SubtitleJob[]> {
+    const response = await this.client.get<SubtitleJob[]>(`/projects/${projectId}/subtitles`);
+    return response.data;
+  }
+
+  async createSubtitleFromSegments(projectId: string, data: { episode_id?: string; language?: string; segments: SubtitleSegment[] }): Promise<SubtitleJob> {
+    const response = await this.client.post<SubtitleJob>(`/projects/${projectId}/subtitles/from-segments`, data);
+    return response.data;
+  }
+
+  async uploadSubtitleAudio(projectId: string, file: File, episodeId?: string, language = 'id'): Promise<SubtitleJob> {
+    const form = new FormData();
+    form.append('file', file);
+    const params: Record<string, string> = { language };
+    if (episodeId) params.episode_id = episodeId;
+    const response = await this.client.post<SubtitleJob>(`/projects/${projectId}/subtitles`, form, {
+      params,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  // Collaboration endpoints (round 2)
+  async getCollabPresence(projectId: string): Promise<CollabPresence[]> {
+    const response = await this.client.get<CollabPresence[]>(`/projects/${projectId}/collab/presence`);
+    return response.data;
+  }
+
+  async postCollabEdit(projectId: string, op: { resource: string; resource_id: string; field: string; value: string }): Promise<{ ok: boolean; version: number }> {
+    const response = await this.client.post(`/projects/${projectId}/collab/edit`, op);
     return response.data;
   }
 }

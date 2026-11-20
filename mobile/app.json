@@ -1,0 +1,1 @@
+{"expo":{"android":{"adaptiveIcon":{"backgroundColor":"#7C3AED","foregroundImage":"./assets/icon.png"},"package":"com.microdrama.app"},"ios":{"supportsTablet":true},"name":"Micro Drama SaaS","orientation":"portrait","platforms":["ios","android","web"],"scheme":"microdrama","slug":"micro-drama-saas","version":"0.1.0","web":{"bundler":"metro"}}}

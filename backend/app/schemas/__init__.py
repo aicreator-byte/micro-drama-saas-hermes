@@ -632,3 +632,147 @@ class AutoGenerateJobResponse(BaseSchema):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Future-dev round 2 (20 Nov 2026)
+# ---------------------------------------------------------------------------
+
+class BillingPlanResponse(BaseSchema):
+    id: str
+    name: str
+    price_idr: int
+    max_projects: Optional[int] = None
+    max_episodes_per_job: int
+    features: List[str] = []
+
+
+class SubscriptionResponse(BaseSchema):
+    id: UUID
+    user_id: UUID
+    plan: str
+    status: str
+    provider: str
+    provider_customer_id: Optional[str] = None
+    provider_subscription_id: Optional[str] = None
+    current_period_end: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CheckoutCreate(BaseSchema):
+    plan: str = Field(..., min_length=1, max_length=50)
+
+
+class CheckoutResponse(BaseSchema):
+    session_id: str
+    checkout_url: str
+    plan: BillingPlanResponse
+    mode: str
+    note: str
+
+
+class WebhookEventIn(BaseSchema):
+    type: str
+    data: Dict[str, Any] = {}
+
+
+class TimelineClip(BaseSchema):
+    id: str
+    track: int = 0
+    start: float = Field(..., ge=0)
+    duration: float = Field(..., gt=0)
+    prompt_id: Optional[UUID] = None
+    scene_id: Optional[UUID] = None
+    asset_id: Optional[UUID] = None
+    label: Optional[str] = None
+    transition: Optional[str] = None
+
+
+class TimelineCreate(BaseSchema):
+    name: str = Field("Main timeline", max_length=255)
+    clips: List[TimelineClip] = []
+    fps: int = Field(30, ge=1, le=120)
+    resolution: str = Field("1080x1920", max_length=20)
+
+
+class TimelineUpdate(BaseSchema):
+    name: Optional[str] = Field(None, max_length=255)
+    clips: Optional[List[TimelineClip]] = None
+    fps: Optional[int] = Field(None, ge=1, le=120)
+    resolution: Optional[str] = Field(None, max_length=20)
+
+
+class TimelineResponse(BaseSchema):
+    id: UUID
+    episode_id: UUID
+    project_id: UUID
+    name: str
+    clips: List[Dict[str, Any]] = []
+    duration_seconds: float
+    fps: int
+    resolution: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConsistencyIssue(BaseSchema):
+    character: str = ""
+    episode_number: Optional[int] = None
+    type: str
+    severity: str
+    description: str
+    suggestion: str = ""
+
+
+class ConsistencyCheckResponse(BaseSchema):
+    id: UUID
+    project_id: UUID
+    status: str
+    checked_episodes: Optional[List[int]] = None
+    issues: Optional[List[ConsistencyIssue]] = None
+    issue_count: int
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class SubtitleSegment(BaseSchema):
+    start: float = Field(..., ge=0)
+    end: float = Field(..., gt=0)
+    text: str
+
+
+class SubtitleFromSegmentsCreate(BaseSchema):
+    episode_id: Optional[UUID] = None
+    language: str = Field("id", max_length=10)
+    segments: List[SubtitleSegment] = Field(..., min_length=1)
+
+
+class SubtitleJobResponse(BaseSchema):
+    id: UUID
+    project_id: UUID
+    episode_id: Optional[UUID] = None
+    source_filename: Optional[str] = None
+    status: str
+    language: str
+    engine: Optional[str] = None
+    model_size: str
+    segments: Optional[List[SubtitleSegment]] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class CollabEditOp(BaseSchema):
+    resource: str
+    resource_id: UUID
+    field: str
+    value: str = Field(..., max_length=20000)
+
+
+class CollabPresenceResponse(BaseSchema):
+    user_id: str
+    name: str
+    field: Optional[str] = None
+    color: str

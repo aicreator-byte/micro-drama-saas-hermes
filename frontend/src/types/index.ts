@@ -322,3 +322,102 @@ export interface AutoGenerateJob {
   updated_at: string;
   completed_at: string | null;
 }
+// ---------------------------------------------------------------------------
+// Future-dev round 2 (20 Nov 2026)
+// ---------------------------------------------------------------------------
+
+export interface BillingPlan {
+  id: string;
+  name: string;
+  price_idr: number;
+  max_projects: number | null;
+  max_episodes_per_job: number;
+  features: string[];
+}
+
+export interface Subscription {
+  id: string;
+  user_id: string;
+  plan: string;
+  status: 'inactive' | 'trialing' | 'active' | 'past_due' | 'canceled';
+  provider: string;
+  provider_customer_id: string | null;
+  provider_subscription_id: string | null;
+  current_period_end: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TimelineClip {
+  id: string;
+  track: number;
+  start: number;
+  duration: number;
+  prompt_id?: string | null;
+  scene_id?: string | null;
+  asset_id?: string | null;
+  label?: string | null;
+  transition?: string | null;
+}
+
+export interface VideoTimeline {
+  id: string;
+  episode_id: string;
+  project_id: string;
+  name: string;
+  clips: TimelineClip[];
+  duration_seconds: number;
+  fps: number;
+  resolution: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConsistencyIssue {
+  character: string;
+  episode_number: number | null;
+  type: string;
+  severity: 'low' | 'medium' | 'high';
+  description: string;
+  suggestion: string;
+}
+
+export interface ConsistencyCheck {
+  id: string;
+  project_id: string;
+  status: 'running' | 'completed' | 'failed';
+  checked_episodes: number[] | null;
+  issues: ConsistencyIssue[] | null;
+  issue_count: number;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface SubtitleSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface SubtitleJob {
+  id: string;
+  project_id: string;
+  episode_id: string | null;
+  source_filename: string | null;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  language: string;
+  engine: string | null;
+  model_size: string;
+  segments: SubtitleSegment[] | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface CollabPresence {
+  user_id: string;
+  name: string;
+  field: string | null;
+  color: string;
+}
